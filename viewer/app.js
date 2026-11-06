@@ -15,6 +15,11 @@ function show(message, state = "idle") {
   status.dataset.state = state;
 }
 
+function connecting(session, message, timeoutMessage) {
+  session.timeoutMessage = timeoutMessage;
+  show(message, "connecting");
+}
+
 function signalingBase() {
   const value = new URL(location.href).searchParams.get("signal");
   if (!value) {
@@ -149,14 +154,16 @@ async function connect(password) {
   active = session;
   connectButton.disabled = true;
   disconnectButton.disabled = false;
-  show("Connecting to Wolfie…", "connecting");
+  connecting(session, "Contacting signaling…", "Timed out reaching the signaling endpoint.");
   session.connectTimer = setTimeout(
-    () => finish(session, "Could not establish a WebRTC session.", "error", true), 45000);
+    () => finish(session, session.timeoutMessage, "error", true), 45000);
   try {
     const base = signalingBase();
     const signal = session.abort.signal;
     const config = await requestJSON(base, "ice", { signal });
     if (active !== session) return;
+    connecting(session, "Gathering WebRTC network addresses…",
+      "The browser timed out gathering WebRTC network addresses.");
     const peer = new RTCPeerConnection({ iceServers: config.iceServers });
     session.peer = peer;
     peer.addTransceiver("video", { direction: "recvonly" });
@@ -169,7 +176,10 @@ async function connect(password) {
     peer.addEventListener("connectionstatechange", () => {
       if (active !== session) return;
       if (peer.connectionState === "failed") {
-        finish(session, "The WebRTC connection failed.", "error");
+        const message = peer.iceConnectionState === "failed"
+          ? "WebRTC could not find a working network path to Wolfie."
+          : "The WebRTC transport failed.";
+        finish(session, message, "error");
       } else if (peer.connectionState === "disconnected") {
         releaseInput(session);
         show("The connection was interrupted.", "connecting");
@@ -179,9 +189,16 @@ async function connect(password) {
     });
     const channel = peer.createDataChannel(channelLabel);
     session.channel = channel;
+    peer.addEventListener("iceconnectionstatechange", () => {
+      if (active === session && channel.readyState === "connecting" &&
+          ["connected", "completed"].includes(peer.iceConnectionState)) {
+        connecting(session, "Opening the control channel…",
+          "WebRTC found a network path, but the control channel timed out.");
+      }
+    });
     channel.addEventListener("open", () => {
       if (active !== session) return;
-      show("Checking password…", "connecting");
+      connecting(session, "Checking password…", "Wolfie did not reply to the password check.");
       send(session, { type: "auth", password: session.password });
       session.password = "";
     });
@@ -196,7 +213,8 @@ async function connect(password) {
         help.textContent = session.canInput
           ? "Click the desktop to send input. Press Ctrl+Alt+Esc to release keyboard focus."
           : "Local preview. Open the remote viewer on another device for control.";
-        show("Waiting for Wolfie’s desktop…", "connecting");
+        connecting(session, "Waiting for Wolfie’s desktop…",
+          "Password accepted, but desktop video did not start.");
         session.pingTimer = setInterval(() => send(session, { type: "ping" }), 10000);
         session.statsTimer = setInterval(() => showRoute(session), 2000);
         showRoute(session);
@@ -209,13 +227,18 @@ async function connect(password) {
     });
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer, signal);
+    connecting(session, "Waiting for Wolfie’s WebRTC answer…", "Wolfie’s WebRTC answer timed out.");
     const answer = await requestJSON(base, "offer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(peer.localDescription),
       signal,
     });
-    if (active === session) await peer.setRemoteDescription(answer);
+    if (active === session) {
+      connecting(session, "Checking WebRTC network paths…",
+        "Wolfie answered, but WebRTC timed out checking network paths.");
+      await peer.setRemoteDescription(answer);
+    }
   } catch (error) {
     finish(session, error.message || "Connection failed.", "error");
   }
