@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Remmie</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Remmie <span>Wolfie</span></h1>
+    <form id="connect-form">
+      <label for="password">Remmie password</label>
+      <input id="password" type="password" required maxlength="256" autocomplete="current-password">
+      <button id="connect" type="submit">Connect</button>
+      <button id="disconnect" type="button" disabled>Disconnect</button>
+    </form>
+  </header>
+  <main>
+    <div class="details">
+      <p id="status" role="status">Ready to connect.</p>
+      <p id="route"></p>
+    </div>
+    <div class="screen">
+      <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Wolfie’s desktop"></video>
+      <p id="empty">Wolfie’s desktop will appear here.</p>
+    </div>
+    <p class="help" id="help"></p>
+  </main>
+</body>
+</html>
