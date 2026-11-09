@@ -21,11 +21,13 @@ function connecting(session, message, timeoutMessage) {
 }
 
 function signalingBase() {
-  const value = new URL(location.href).searchParams.get("signal");
+  const configured = new URL(location.href).searchParams.get("signal");
+  const value = configured || (location.origin === "https://nikuhkid.github.io"
+    ? "https://nikuhkid.ddns.net/api/" : null);
   if (!value) {
     const loopback = ["127.0.0.1", "localhost"].includes(location.hostname);
     const lan = location.protocol === "https:" && /^\d+(?:\.\d+){3}$/.test(location.hostname);
-    if (!loopback && !lan) {
+    if (!loopback && !lan && location.hostname !== "nikuhkid.ddns.net") {
       throw new Error("This viewer link needs a Remmie signaling address.");
     }
     return new URL("./api/", location.href);
@@ -34,7 +36,7 @@ function signalingBase() {
   const loopback = url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname);
   if (
     (url.protocol !== "https:" && !loopback) || url.username || url.password ||
-    url.search || url.hash || !/^\/api\/[a-f0-9]{32}\/?$/.test(url.pathname)
+    url.search || url.hash || !/^\/api(?:\/[a-f0-9]{32})?\/?$/.test(url.pathname)
   ) {
     throw new Error("The Remmie signaling address is invalid.");
   }
