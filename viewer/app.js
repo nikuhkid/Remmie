@@ -22,6 +22,30 @@ const clipboardGet = document.querySelector("#clipboard-get");
 const controlStatus = document.querySelector("#control-status");
 const channelLabel = "remmie-control-v1";
 let active = null;
+let desired = null;
+
+function forgetConnection() {
+  if (!desired) return;
+  clearTimeout(desired.timer);
+  desired.password = "";
+  desired = null;
+}
+
+function reconnect(intent, reason) {
+  if (desired !== intent) return;
+  connectButton.disabled = true;
+  disconnectButton.disabled = false;
+  passwordField.disabled = true;
+  if (navigator.onLine === false) {
+    show("Network offline. Remmie will reconnect when it returns.", "connecting");
+    return;
+  }
+  const delay = Math.min(15000, 1000 * 2 ** Math.min(intent.attempt++, 4));
+  show(`${reason} Reconnecting in ${delay / 1000}s…`, "connecting");
+  intent.timer = setTimeout(() => {
+    if (desired === intent && !active) connect(intent.password, intent);
+  }, delay);
+}
 
 function show(message, state = "idle") {
   status.textContent = message;
@@ -33,7 +57,7 @@ function connecting(session, message, timeoutMessage) {
   clearTimeout(session.connectTimer);
   session.timeoutMessage = timeoutMessage;
   session.connectTimer = setTimeout(
-    () => finish(session, session.timeoutMessage, "error", true), 45000);
+    () => finish(session, session.timeoutMessage, "error", true, true), 45000);
   show(message, "connecting");
 }
 
@@ -121,7 +145,9 @@ async function requestJSON(base, path, options) {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload) {
-    throw new Error(payload?.error || `Signaling returned HTTP ${response.status}.`);
+    const error = new Error(payload?.error || `Signaling returned HTTP ${response.status}.`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -142,7 +168,7 @@ function releaseInput(session) {
   if (session.authorized) send(session, { type: "release" });
 }
 
-function finish(session, message, state = "idle", tellHost = false) {
+function finish(session, message, state = "idle", tellHost = false, recover = false) {
   if (active !== session) return;
   active = null;
   stopCapture(session);
@@ -152,6 +178,7 @@ function finish(session, message, state = "idle", tellHost = false) {
   clearInterval(session.pingTimer);
   clearInterval(session.statsTimer);
   clearTimeout(session.controlTimer);
+  clearTimeout(session.disconnectTimer);
   session.password = "";
   if (sent) {
     // Give the reliable control message time to leave before closing transport.
@@ -171,7 +198,22 @@ function finish(session, message, state = "idle", tellHost = false) {
   if (document.fullscreenElement === workspace) document.exitFullscreen().catch(() => {});
   connectButton.disabled = false;
   disconnectButton.disabled = true;
-  show(message, state);
+  passwordField.disabled = false;
+  if (recover && desired === session.intent && session.intent.connected) {
+    reconnect(session.intent, message);
+  } else {
+    forgetConnection();
+    show(message, state);
+  }
+}
+
+function heartbeat(session) {
+  if (active !== session) return;
+  if (session.features?.heartbeat && Date.now() - session.lastPong > 15000) {
+    finish(session, "Wolfie stopped responding.", "error", true, true);
+    return;
+  }
+  send(session, { type: "ping" });
 }
 
 function waitForIce(peer, signal) {
@@ -220,10 +262,16 @@ async function showRoute(session) {
   }
 }
 
-async function connect(password) {
+async function connect(password, intent = null) {
   if (active) return;
+  if (!intent) {
+    forgetConnection();
+    desired = intent = { password, connected: false, attempt: 0 };
+  }
+  if (desired !== intent) return;
   const session = {
     password,
+    intent,
     abort: new AbortController(),
     authorized: false,
     buttons: new Set(),
@@ -232,6 +280,7 @@ async function connect(password) {
   active = session;
   connectButton.disabled = true;
   disconnectButton.disabled = false;
+  passwordField.disabled = true;
   connecting(session, "Contacting signaling…", "Timed out reaching the signaling endpoint.");
   try {
     const base = signalingBase();
@@ -255,11 +304,18 @@ async function connect(password) {
         const message = peer.iceConnectionState === "failed"
           ? "WebRTC could not find a working network path to Wolfie."
           : "The WebRTC transport failed.";
-        finish(session, message, "error");
+        finish(session, message, "error", false, true);
       } else if (peer.connectionState === "disconnected") {
-        releaseInput(session);
-        show("The connection was interrupted.", "connecting");
+        stopCapture(session);
+        desktopControls(session);
+        if (!session.disconnectTimer) {
+          session.disconnectTimer = setTimeout(() =>
+            finish(session, "The connection was interrupted.", "error", true, true), 8000);
+        }
+        show("Connection interrupted. Waiting briefly for the network…", "connecting");
       } else if (peer.connectionState === "connected" && session.authorized && video.videoWidth) {
+        clearTimeout(session.disconnectTimer);
+        session.disconnectTimer = null;
         showDesktop(session);
       }
     });
@@ -278,7 +334,7 @@ async function connect(password) {
       send(session, { type: "auth", password: session.password });
       session.password = "";
     });
-    channel.addEventListener("close", () => finish(session, "Disconnected."));
+    channel.addEventListener("close", () => finish(session, "The control channel closed.", "idle", false, true));
     channel.addEventListener("message", event => {
       if (active !== session) return;
       let message;
@@ -287,19 +343,24 @@ async function connect(password) {
         session.authorized = true;
         session.canInput = message.input === true;
         session.features = message.features || {};
+        session.intent.connected = true;
+        session.lastPong = Date.now();
         if (session.features.monitors) session.pendingControl = "monitors-get";
         help.textContent = session.canInput
           ? "Click the desktop to send input. Ctrl+Alt+Esc releases keyboard and mouse capture."
           : "Local preview. Open the remote viewer on another device for control.";
         connecting(session, "Waiting for Wolfie’s desktop…",
           "Password accepted, but desktop video did not start.");
-        session.pingTimer = setInterval(() => send(session, { type: "ping" }), 10000);
+        session.pingTimer = setInterval(() => heartbeat(session), 5000);
+        heartbeat(session);
         session.statsTimer = setInterval(() => showRoute(session), 2000);
         showRoute(session);
         if (video.videoWidth && video.readyState >= 2) showDesktop(session);
         if (!message.features && session.canInput) {
           controlStatus.textContent = "Restart the host to enable the new desktop controls.";
         }
+      } else if (message?.type === "pong" && session.authorized) {
+        session.lastPong = Date.now();
       } else if (message?.type === "monitors" && session.authorized) {
         session.displays = Array.isArray(message.displays) ? message.displays.filter(display =>
           Number.isInteger(display.id) && display.id > 0 && display.width > 0 && display.height > 0
@@ -328,6 +389,7 @@ async function connect(password) {
     });
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer, signal);
+    if (active !== session) return;
     connecting(session, "Waiting for Wolfie’s WebRTC answer…", "Wolfie’s WebRTC answer timed out.");
     const answer = await requestJSON(base, "offer", {
       method: "POST",
@@ -341,13 +403,17 @@ async function connect(password) {
       await peer.setRemoteDescription(answer);
     }
   } catch (error) {
-    finish(session, error.message || "Connection failed.", "error");
+    const retryable = !error.status || [408, 409, 429, 500, 502, 503, 504].includes(error.status);
+    finish(session, error.message || "Connection failed.", "error", false, retryable);
   }
 }
 
 function showDesktop(session) {
-  if (active !== session || !session.authorized) return;
+  if (active !== session || !session.authorized || session.peer.connectionState !== "connected") return;
   clearTimeout(session.connectTimer);
+  clearTimeout(session.disconnectTimer);
+  session.disconnectTimer = null;
+  session.intent.attempt = 0;
   empty.hidden = true;
   desktopControls(session);
   show(session.canInput ? "Connected to Wolfie." : "Previewing Wolfie’s desktop.", "connected");
@@ -369,9 +435,33 @@ form.addEventListener("submit", event => {
 });
 disconnectButton.addEventListener("click", () => {
   if (active) finish(active, "Disconnected.", "idle", true);
+  else {
+    forgetConnection();
+    connectButton.disabled = false;
+    disconnectButton.disabled = true;
+    passwordField.disabled = false;
+    show("Disconnected.");
+  }
 });
 window.addEventListener("pagehide", () => {
   if (active) finish(active, "Disconnected.", "idle", true);
+  else forgetConnection();
+});
+window.addEventListener("online", () => {
+  if (!desired) return;
+  if (!active) {
+    clearTimeout(desired.timer);
+    connect(desired.password, desired);
+  } else if (active.peer?.connectionState === "disconnected") {
+    finish(active, "The network returned.", "idle", true, true);
+  }
+});
+window.addEventListener("offline", () => {
+  if (active) finish(active, "Network offline.", "idle", true, true);
+  else if (desired) {
+    clearTimeout(desired.timer);
+    reconnect(desired, "Network offline.");
+  }
 });
 
 function inputSession() {
@@ -483,6 +573,7 @@ video.addEventListener("blur", () => stopCapture(active));
 window.addEventListener("blur", () => stopCapture(active));
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopCapture(active);
+  else if (active?.authorized) heartbeat(active);
 });
 
 fullscreenButton.addEventListener("click", async () => {
