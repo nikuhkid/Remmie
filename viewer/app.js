@@ -16,7 +16,11 @@ function show(message, state = "idle") {
 }
 
 function connecting(session, message, timeoutMessage) {
+  if (active !== session) return;
+  clearTimeout(session.connectTimer);
   session.timeoutMessage = timeoutMessage;
+  session.connectTimer = setTimeout(
+    () => finish(session, session.timeoutMessage, "error", true), 45000);
   show(message, "connecting");
 }
 
@@ -157,8 +161,6 @@ async function connect(password) {
   connectButton.disabled = true;
   disconnectButton.disabled = false;
   connecting(session, "Contacting signaling…", "Timed out reaching the signaling endpoint.");
-  session.connectTimer = setTimeout(
-    () => finish(session, session.timeoutMessage, "error", true), 45000);
   try {
     const base = signalingBase();
     const signal = session.abort.signal;
