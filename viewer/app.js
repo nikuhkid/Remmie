@@ -352,7 +352,8 @@ function updatePerformance(session, report) {
   session.performancePrevious = baseline;
   if (!sample) return;
   const number = value => Number.isFinite(value) ? value.toFixed(1) : "?";
-  performanceLive.textContent = `${number(sample.fps)} FPS · ${number(sample.payloadMbps)} Mbps video · ` +
+  const bitrate = Number.isFinite(sample.payloadMbps) ? sample.payloadMbps.toFixed(3) : "?";
+  performanceLive.textContent = `${number(sample.fps)} FPS · ${bitrate} Mbps video · ` +
     `${number(sample.networkRTTMs)} ms network RTT · ${sample.codec || "codec unknown"}`;
   if (measurement?.session === session) {
     measurement.samples.push(sample);
