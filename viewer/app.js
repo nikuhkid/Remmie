@@ -7,6 +7,19 @@ const status = document.querySelector("#status");
 const route = document.querySelector("#route");
 const empty = document.querySelector("#empty");
 const help = document.querySelector("#help");
+const workspace = document.querySelector("#workspace");
+const fullscreenButton = document.querySelector("#fullscreen");
+const releaseButton = document.querySelector("#release");
+const monitorSelect = document.querySelector("#monitor");
+const relativeButton = document.querySelector("#relative");
+const shortcutSelect = document.querySelector("#shortcut");
+const shortcutButton = document.querySelector("#send-shortcut");
+const clipboardToggle = document.querySelector("#clipboard-toggle");
+const clipboardPanel = document.querySelector("#clipboard-panel");
+const clipboardText = document.querySelector("#clipboard-text");
+const clipboardSend = document.querySelector("#clipboard-send");
+const clipboardGet = document.querySelector("#clipboard-get");
+const controlStatus = document.querySelector("#control-status");
 const channelLabel = "remmie-control-v1";
 let active = null;
 
@@ -22,6 +35,57 @@ function connecting(session, message, timeoutMessage) {
   session.connectTimer = setTimeout(
     () => finish(session, session.timeoutMessage, "error", true), 45000);
   show(message, "connecting");
+}
+
+function desktopControls(session) {
+  const connected = session?.authorized && video.readyState >= 2 &&
+    session.peer.connectionState === "connected";
+  const features = session?.features || {};
+  fullscreenButton.disabled = !connected || !workspace.requestFullscreen;
+  releaseButton.disabled = !connected;
+  relativeButton.disabled = !connected || !features.relativeMouse || !video.requestPointerLock;
+  shortcutSelect.disabled = shortcutButton.disabled = !connected || !features.shortcuts;
+  clipboardToggle.disabled = !connected || !features.clipboard;
+  clipboardSend.disabled = clipboardGet.disabled = !connected || !features.clipboard || !!session.pendingControl;
+  monitorSelect.disabled = !connected || !session.displays?.length || !!session.pendingControl;
+}
+
+function stopCapture(session) {
+  releaseInput(session);
+  globalThis.navigator?.keyboard?.unlock();
+  if (document.pointerLockElement === video) document.exitPointerLock();
+}
+
+async function captureKeyboard() {
+  if (document.fullscreenElement !== workspace || !navigator.keyboard?.lock) return;
+  try {
+    await navigator.keyboard.lock();
+    controlStatus.textContent = "Keyboard capture active. Ctrl+Alt+Esc releases controls.";
+  } catch {
+    controlStatus.textContent = "Fullscreen active. This browser keeps some shortcuts; use the shortcut menu.";
+  }
+}
+
+function requestControl(session, message) {
+  if (session.pendingControl) return;
+  session.pendingControl = message.type;
+  session.monitorChanging = message.type === "monitor-select";
+  session.controlTimer = setTimeout(() => {
+    if (active !== session) return;
+    session.pendingControl = null;
+    session.monitorChanging = false;
+    desktopControls(session);
+    controlStatus.textContent = "The desktop operation timed out. Try again.";
+  }, 15000);
+  send(session, message);
+  desktopControls(session);
+}
+
+function completeControl(session) {
+  clearTimeout(session.controlTimer);
+  session.pendingControl = null;
+  session.monitorChanging = false;
+  desktopControls(session);
 }
 
 function signalingBase() {
@@ -73,6 +137,7 @@ function releaseInput(session) {
   cancelAnimationFrame(session.motionFrame);
   session.motionFrame = 0;
   session.motion = null;
+  session.relativeMotion = null;
   session.buttons.clear();
   if (session.authorized) send(session, { type: "release" });
 }
@@ -80,12 +145,13 @@ function releaseInput(session) {
 function finish(session, message, state = "idle", tellHost = false) {
   if (active !== session) return;
   active = null;
-  releaseInput(session);
+  stopCapture(session);
   const sent = tellHost && send(session, { type: "disconnect" });
   session.abort.abort();
   clearTimeout(session.connectTimer);
   clearInterval(session.pingTimer);
   clearInterval(session.statsTimer);
+  clearTimeout(session.controlTimer);
   session.password = "";
   if (sent) {
     // Give the reliable control message time to leave before closing transport.
@@ -97,6 +163,12 @@ function finish(session, message, state = "idle", tellHost = false) {
   empty.hidden = false;
   route.textContent = "";
   help.textContent = "";
+  controlStatus.textContent = "";
+  clipboardPanel.hidden = true;
+  clipboardToggle.setAttribute("aria-expanded", "false");
+  monitorSelect.replaceChildren(new Option("Host display", ""));
+  desktopControls(null);
+  if (document.fullscreenElement === workspace) document.exitFullscreen().catch(() => {});
   connectButton.disabled = false;
   disconnectButton.disabled = true;
   show(message, state);
@@ -214,8 +286,10 @@ async function connect(password) {
       if (message?.type === "ready" && !session.authorized) {
         session.authorized = true;
         session.canInput = message.input === true;
+        session.features = message.features || {};
+        if (session.features.monitors) session.pendingControl = "monitors-get";
         help.textContent = session.canInput
-          ? "Click the desktop to send input. Press Ctrl+Alt+Esc to release keyboard focus."
+          ? "Click the desktop to send input. Ctrl+Alt+Esc releases keyboard and mouse capture."
           : "Local preview. Open the remote viewer on another device for control.";
         connecting(session, "Waiting for Wolfie’s desktop…",
           "Password accepted, but desktop video did not start.");
@@ -223,6 +297,29 @@ async function connect(password) {
         session.statsTimer = setInterval(() => showRoute(session), 2000);
         showRoute(session);
         if (video.videoWidth && video.readyState >= 2) showDesktop(session);
+        if (!message.features && session.canInput) {
+          controlStatus.textContent = "Restart the host to enable the new desktop controls.";
+        }
+      } else if (message?.type === "monitors" && session.authorized) {
+        session.displays = Array.isArray(message.displays) ? message.displays.filter(display =>
+          Number.isInteger(display.id) && display.id > 0 && display.width > 0 && display.height > 0
+        ).slice(0, 64) : [];
+        monitorSelect.replaceChildren(...session.displays.map(display =>
+          new Option(`Display ${display.id} · ${display.width}×${display.height}`, display.id)));
+        monitorSelect.value = String(message.selected);
+        session.selectedMonitor = monitorSelect.value;
+        completeControl(session);
+      } else if (message?.type === "clipboard-text" && session.authorized) {
+        clipboardText.value = message.text;
+        completeControl(session);
+        controlStatus.textContent = "Text received from Wolfie. Choose Copy locally to use it here.";
+      } else if (message?.type === "clipboard-set" && session.authorized) {
+        completeControl(session);
+        controlStatus.textContent = "Wolfie's clipboard updated.";
+      } else if (message?.type === "control-error" && session.authorized) {
+        completeControl(session);
+        monitorSelect.value = session.selectedMonitor || "";
+        controlStatus.textContent = message.message;
       } else if (message?.type === "denied" || message?.type === "error") {
         finish(session, message.message, "error");
       } else if (message?.type === "input-error") {
@@ -252,6 +349,7 @@ function showDesktop(session) {
   if (active !== session || !session.authorized) return;
   clearTimeout(session.connectTimer);
   empty.hidden = true;
+  desktopControls(session);
   show(session.canInput ? "Connected to Wolfie." : "Previewing Wolfie’s desktop.", "connected");
 }
 
@@ -277,49 +375,70 @@ window.addEventListener("pagehide", () => {
 });
 
 function inputSession() {
-  return active?.canInput && active.peer.connectionState === "connected" && video.videoWidth
+  return active?.canInput && !active.monitorChanging && active.peer.connectionState === "connected" && video.videoWidth
     ? active : null;
 }
 
-function point(event) {
+function point(event, clamp = false) {
   const box = video.getBoundingClientRect();
   const scale = Math.min(box.width / video.videoWidth, box.height / video.videoHeight);
   const width = video.videoWidth * scale;
   const height = video.videoHeight * scale;
-  return {
-    x: Math.min(1, Math.max(0, (event.clientX - box.left - (box.width - width) / 2) / width)),
-    y: Math.min(1, Math.max(0, (event.clientY - box.top - (box.height - height) / 2) / height)),
-  };
+  const x = (event.clientX - box.left - (box.width - width) / 2) / width;
+  const y = (event.clientY - box.top - (box.height - height) / 2) / height;
+  if (!clamp && (x < 0 || x > 1 || y < 0 || y > 1)) return null;
+  return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
 }
 
 video.addEventListener("pointermove", event => {
   const session = inputSession();
   if (!session || document.activeElement !== video) return;
-  session.motion = point(event);
+  if (document.pointerLockElement === video) {
+    session.relativeMotion ||= { dx: 0, dy: 0 };
+    session.relativeMotion.dx += event.movementX;
+    session.relativeMotion.dy += event.movementY;
+  } else {
+    const position = point(event, session.buttons.size > 0);
+    if (!position) return;
+    session.motion = position;
+  }
   if (session.motionFrame) return;
   session.motionFrame = requestAnimationFrame(() => {
     session.motionFrame = 0;
-    if (inputSession() === session && session.motion && session.channel.bufferedAmount < 16384) {
-      send(session, { type: "move", ...session.motion });
+    if (inputSession() === session && session.channel.bufferedAmount < 16384) {
+      if (session.relativeMotion && document.pointerLockElement === video) {
+        const bounded = value => Math.max(-32767, Math.min(32767, Math.round(value)));
+        send(session, { type: "relative-move",
+          dx: bounded(session.relativeMotion.dx), dy: bounded(session.relativeMotion.dy) });
+      } else if (session.motion) {
+        send(session, { type: "move", ...session.motion });
+      }
     }
     session.motion = null;
+    session.relativeMotion = null;
   });
 });
 
 video.addEventListener("pointerdown", event => {
   const session = inputSession();
   if (!session || ![0, 1, 2].includes(event.button)) return;
+  const relative = document.pointerLockElement === video;
+  const position = relative ? {} : point(event);
+  if (!position) return;
   event.preventDefault();
   video.focus({ preventScroll: true });
-  video.setPointerCapture(event.pointerId);
+  captureKeyboard();
+  if (!relative) video.setPointerCapture(event.pointerId);
   session.buttons.add(event.button);
-  send(session, { type: "button", button: event.button, pressed: true, ...point(event) });
+  send(session, { type: "button", button: event.button, pressed: true, relative, ...position });
 });
 
 video.addEventListener("pointerup", event => {
   const session = inputSession();
   if (!session?.buttons.delete(event.button)) return;
-  send(session, { type: "button", button: event.button, pressed: false, ...point(event) });
+  const relative = document.pointerLockElement === video;
+  send(session, { type: "button", button: event.button, pressed: false, relative,
+    ...(relative ? {} : point(event, true)) });
 });
 
 video.addEventListener("pointercancel", () => releaseInput(active));
@@ -332,10 +451,13 @@ video.addEventListener("contextmenu", event => {
 video.addEventListener("wheel", event => {
   const session = inputSession();
   if (!session || document.activeElement !== video) return;
+  const relative = document.pointerLockElement === video;
+  const position = relative ? {} : point(event);
+  if (!position) return;
   event.preventDefault();
   const multiplier = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 120 : 1;
   const wheelUnits = delta => Math.max(-1200, Math.min(1200, Math.round(delta * multiplier)));
-  send(session, { type: "wheel", dx: wheelUnits(event.deltaX), dy: wheelUnits(-event.deltaY), ...point(event) });
+  send(session, { type: "wheel", dx: wheelUnits(event.deltaX), dy: wheelUnits(-event.deltaY), relative, ...position });
 }, { passive: false });
 
 video.addEventListener("keydown", event => {
@@ -343,7 +465,8 @@ video.addEventListener("keydown", event => {
   if (!session || event.isComposing || !event.code) return;
   event.preventDefault();
   if (event.code === "Escape" && event.ctrlKey && event.altKey) {
-    disconnectButton.focus();
+    stopCapture(session);
+    releaseButton.focus();
     return;
   }
   send(session, { type: "key", code: event.code, pressed: true });
@@ -356,8 +479,110 @@ video.addEventListener("keyup", event => {
   send(session, { type: "key", code: event.code, pressed: false });
 });
 
-video.addEventListener("blur", () => releaseInput(active));
-window.addEventListener("blur", () => releaseInput(active));
+video.addEventListener("blur", () => stopCapture(active));
+window.addEventListener("blur", () => stopCapture(active));
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) releaseInput(active);
+  if (document.hidden) stopCapture(active);
+});
+
+fullscreenButton.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement === workspace) {
+      await document.exitFullscreen();
+    } else {
+      await workspace.requestFullscreen();
+      video.focus({ preventScroll: true });
+      await captureKeyboard();
+    }
+  } catch (error) {
+    controlStatus.textContent = `Fullscreen unavailable: ${error.message}`;
+  }
+});
+document.addEventListener("fullscreenchange", () => {
+  fullscreenButton.textContent = document.fullscreenElement === workspace ? "Exit fullscreen" : "Fullscreen";
+  if (document.fullscreenElement !== workspace) stopCapture(active);
+});
+releaseButton.addEventListener("click", () => {
+  stopCapture(active);
+  controlStatus.textContent = "Controls released. Click the desktop to resume.";
+});
+relativeButton.addEventListener("click", async () => {
+  if (!inputSession()) return;
+  if (document.pointerLockElement === video) {
+    document.exitPointerLock();
+    return;
+  }
+  try {
+    await video.requestPointerLock({ unadjustedMovement: true });
+  } catch (error) {
+    if (error.name === "NotSupportedError") {
+      try { await video.requestPointerLock(); } catch (failure) {
+        controlStatus.textContent = `Mouse capture unavailable: ${failure.message}`;
+      }
+    } else {
+      controlStatus.textContent = `Mouse capture unavailable: ${error.message}`;
+    }
+  }
+});
+document.addEventListener("pointerlockchange", () => {
+  releaseInput(active);
+  const locked = document.pointerLockElement === video;
+  relativeButton.setAttribute("aria-pressed", String(locked));
+  relativeButton.textContent = locked ? "Release mouse" : "Relative mouse";
+  if (locked) video.focus({ preventScroll: true });
+  controlStatus.textContent = locked
+    ? "Relative mouse active. Ctrl+Alt+Esc releases controls."
+    : "Mouse capture released.";
+});
+document.addEventListener("pointerlockerror", () => {
+  controlStatus.textContent = "Mouse capture failed. Activate this browser window and try Relative mouse again.";
+});
+shortcutButton.addEventListener("click", () => {
+  const session = inputSession();
+  if (!session) return;
+  releaseInput(session);
+  send(session, { type: "shortcut", name: shortcutSelect.value });
+  video.focus({ preventScroll: true });
+});
+monitorSelect.addEventListener("change", () => {
+  const session = active;
+  if (!session?.features?.monitors) return;
+  stopCapture(session);
+  requestControl(session, { type: "monitor-select", id: Number(monitorSelect.value) });
+});
+clipboardToggle.addEventListener("click", () => {
+  clipboardPanel.hidden = !clipboardPanel.hidden;
+  clipboardToggle.setAttribute("aria-expanded", String(!clipboardPanel.hidden));
+  if (!clipboardPanel.hidden) clipboardText.focus();
+});
+document.querySelector("#clipboard-read").addEventListener("click", async () => {
+  try {
+    clipboardText.value = await navigator.clipboard.readText();
+    controlStatus.textContent = "Local text loaded. Choose Send to Wolfie to transfer it.";
+  } catch {
+    clipboardText.focus();
+    controlStatus.textContent = "Paste into the text box with Ctrl+V, then choose Send to Wolfie.";
+  }
+});
+clipboardSend.addEventListener("click", () => {
+  const session = active;
+  if (!session?.features?.clipboard) return;
+  if (new TextEncoder().encode(clipboardText.value).length > 8192) {
+    controlStatus.textContent = "Clipboard text exceeds the 8 KiB limit.";
+    return;
+  }
+  requestControl(session, { type: "clipboard-set", text: clipboardText.value });
+});
+clipboardGet.addEventListener("click", () => {
+  if (active?.features?.clipboard) requestControl(active, { type: "clipboard-get" });
+});
+document.querySelector("#clipboard-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(clipboardText.value);
+    controlStatus.textContent = "Text copied to the local clipboard.";
+  } catch {
+    clipboardText.focus();
+    clipboardText.select();
+    controlStatus.textContent = "Press Ctrl+C to copy the selected text.";
+  }
 });

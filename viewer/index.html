@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>Remmie</title>
-  <link rel="stylesheet" href="./style.css">
-  <script type="module" src="./app.js?v=stage-timeouts-1"></script>
+  <link rel="stylesheet" href="./style.css?v=desktop-controls-1">
+  <script type="module" src="./app.js?v=desktop-controls-1"></script>
 </head>
 <body>
   <header>
@@ -23,11 +23,41 @@
       <p id="status" role="status">Ready to connect.</p>
       <p id="route"></p>
     </div>
-    <div class="screen">
-      <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Wolfie’s desktop"></video>
-      <p id="empty">Wolfie’s desktop will appear here.</p>
+    <div id="workspace">
+      <div class="toolbar" aria-label="Desktop controls">
+        <button id="fullscreen" type="button" disabled>Fullscreen</button>
+        <button id="release" type="button" disabled>Release controls</button>
+        <label for="monitor">Display</label>
+        <select id="monitor" disabled><option>Host display</option></select>
+        <button id="relative" type="button" aria-pressed="false" disabled>Relative mouse</button>
+        <label for="shortcut">Shortcut</label>
+        <select id="shortcut" disabled>
+          <option value="alt-tab">Alt+Tab</option>
+          <option value="windows">Windows key</option>
+          <option value="show-desktop">Win+D</option>
+          <option value="task-manager">Ctrl+Shift+Esc</option>
+          <option value="alt-f4">Alt+F4</option>
+        </select>
+        <button id="send-shortcut" type="button" disabled>Send</button>
+        <button id="clipboard-toggle" type="button" aria-expanded="false" disabled>Clipboard</button>
+      </div>
+      <section id="clipboard-panel" hidden aria-label="Clipboard text">
+        <label for="clipboard-text">Clipboard text · up to 8 KiB</label>
+        <textarea id="clipboard-text" rows="4" spellcheck="false"></textarea>
+        <div class="toolbar">
+          <button id="clipboard-read" type="button">Read local clipboard</button>
+          <button id="clipboard-send" type="button">Send to Wolfie</button>
+          <button id="clipboard-get" type="button">Get from Wolfie</button>
+          <button id="clipboard-copy" type="button">Copy locally</button>
+        </div>
+      </section>
+      <div class="screen">
+        <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Wolfie’s desktop"></video>
+        <p id="empty">Wolfie’s desktop will appear here.</p>
+      </div>
+      <p class="help" id="help"></p>
+      <p id="control-status" role="status"></p>
     </div>
-    <p class="help" id="help"></p>
   </main>
 </body>
 </html>

@@ -11,17 +11,27 @@ header { display: flex; gap: 1rem; align-items: center; justify-content: space-b
 h1 { font-size: 1.35rem; margin: 0; }
 h1 span { color: #adb7c7; font-weight: 400; margin-left: 0.5rem; }
 form, .details { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; }
-input, button { font: inherit; border: 1px solid #58616f; border-radius: 0.4rem; padding: 0.5rem 0.75rem; }
-input { background: #101216; min-width: 10ch; }
+input, button, select, textarea { font: inherit; border: 1px solid #58616f; border-radius: 0.4rem; padding: 0.5rem 0.75rem; }
+input, select, textarea { background: #101216; color: inherit; min-width: 10ch; }
 button { cursor: pointer; background: #284780; color: #fff; }
-button:disabled { opacity: 0.5; cursor: default; }
+button:disabled, select:disabled { opacity: 0.5; cursor: default; }
 #disconnect { background: #282d36; }
 .details { justify-content: space-between; min-height: 2rem; }
 .details p { margin: 0 0 0.7rem; }
 #status[data-state="error"] { color: #ffaeae; }
-.screen { position: relative; height: clamp(240px, calc(100dvh - 11rem), 85dvh); background: #07090b; border: 1px solid #414955; border-radius: 0.5rem; }
+.screen { position: relative; height: clamp(240px, calc(100dvh - 17rem), 80dvh); background: #07090b; border: 1px solid #414955; border-radius: 0.5rem; }
 video { width: 100%; height: 100%; object-fit: contain; display: block; touch-action: none; }
-video:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid #8ab5ff; outline-offset: 2px; }
+video:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #8ab5ff; outline-offset: 2px; }
 .screen p { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; pointer-events: none; color: #adb7c7; }
 .screen p[hidden] { display: none; }
 .help, #route { font-size: 0.9rem; color: #adb7c7; }
+.toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem; }
+#relative[aria-pressed="true"] { background: #226f49; }
+#clipboard-panel { background: #1b1e24; padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 0.75rem; }
+#clipboard-text { display: block; box-sizing: border-box; width: 100%; resize: vertical; margin: 0.5rem 0; }
+#control-status { margin: 0.4rem 0; min-height: 1.2em; color: #adb7c7; font-size: 0.9rem; }
+#workspace:fullscreen { display: flex; flex-direction: column; background: #101216; padding: 0.75rem; box-sizing: border-box; }
+#workspace:fullscreen .screen { flex: 1; min-height: 0; height: auto; }
+#workspace:fullscreen #clipboard-panel { flex-shrink: 0; }
+#workspace:fullscreen .help { margin: 0.5rem 0; }
+[hidden] { display: none !important; }
