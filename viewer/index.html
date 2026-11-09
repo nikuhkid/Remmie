@@ -6,7 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <title>Remmie</title>
   <link rel="stylesheet" href="./style.css?v=desktop-controls-1">
-  <script type="module" src="./app.js?v=connection-recovery-1"></script>
+  <script type="module" src="./app.js?v=performance-1"></script>
 </head>
 <body>
   <header>
@@ -23,6 +23,17 @@
       <p id="status" role="status">Ready to connect.</p>
       <p id="route"></p>
     </div>
+    <details id="performance-panel">
+      <summary>Performance measurements</summary>
+      <p id="performance-live">Connect to read stream statistics.</p>
+      <div class="toolbar">
+        <button id="performance-start" type="button" disabled>Measure 60 seconds</button>
+        <button id="performance-copy" type="button" disabled>Copy summary</button>
+        <button id="performance-save" type="button" disabled>Save JSON</button>
+      </div>
+      <pre id="performance-summary" tabindex="0"></pre>
+      <p class="help">Includes video payload rate, frame delivery, packet loss, decode time and buffering. Network RTT is not input-to-screen delay. Reports stay in this page until you copy or save them.</p>
+    </details>
     <div id="workspace">
       <div class="toolbar" aria-label="Desktop controls">
         <button id="fullscreen" type="button" disabled>Fullscreen</button>

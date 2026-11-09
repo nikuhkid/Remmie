@@ -21,8 +21,15 @@ const clipboardSend = document.querySelector("#clipboard-send");
 const clipboardGet = document.querySelector("#clipboard-get");
 const controlStatus = document.querySelector("#control-status");
 const channelLabel = "remmie-control-v1";
+const performanceStart = document.querySelector("#performance-start");
+const performanceCopy = document.querySelector("#performance-copy");
+const performanceSave = document.querySelector("#performance-save");
+const performanceLive = document.querySelector("#performance-live");
+const performanceSummary = document.querySelector("#performance-summary");
 let active = null;
 let desired = null;
+let measurement = null;
+let lastMeasurement = null;
 
 function forgetConnection() {
   if (!desired) return;
@@ -72,6 +79,7 @@ function desktopControls(session) {
   clipboardToggle.disabled = !connected || !features.clipboard;
   clipboardSend.disabled = clipboardGet.disabled = !connected || !features.clipboard || !!session.pendingControl;
   monitorSelect.disabled = !connected || !session.displays?.length || !!session.pendingControl;
+  performanceStart.disabled = !connected || !!measurement;
 }
 
 function stopCapture(session) {
@@ -170,6 +178,7 @@ function releaseInput(session) {
 
 function finish(session, message, state = "idle", tellHost = false, recover = false) {
   if (active !== session) return;
+  if (measurement?.session === session) endMeasurement("Connection ended; partial measurement.");
   active = null;
   stopCapture(session);
   const sent = tellHost && send(session, { type: "disconnect" });
@@ -189,6 +198,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   video.srcObject = null;
   empty.hidden = false;
   route.textContent = "";
+  performanceLive.textContent = "Connect to read stream statistics.";
   help.textContent = "";
   controlStatus.textContent = "";
   clipboardPanel.hidden = true;
@@ -243,6 +253,7 @@ function waitForIce(peer, signal) {
 async function showRoute(session) {
   const report = await session.peer.getStats().catch(() => null);
   if (!report || active !== session) return;
+  updatePerformance(session, report);
   let pair;
   for (const stat of report.values()) {
     if (stat.type === "transport" && stat.selectedCandidatePairId) {
@@ -261,6 +272,135 @@ async function showRoute(session) {
     route.textContent = candidateTypes.includes("relay") ? "Relayed connection" : "Direct connection";
   }
 }
+
+function performanceInterval(report, previous) {
+  const inbound = [...report.values()].find(stat => stat.type === "inbound-rtp" &&
+    (stat.kind === "video" || stat.mediaType === "video"));
+  if (!inbound) return { baseline: null, sample: null };
+  const fields = ["timestamp", "bytesReceived", "framesDecoded", "framesDropped", "packetsReceived",
+    "packetsLost", "totalDecodeTime", "jitterBufferDelay", "jitterBufferEmittedCount", "freezeCount"];
+  const baseline = { id: inbound.id };
+  for (const key of fields) baseline[key] = Number.isFinite(inbound[key]) ? inbound[key] : null;
+  const seconds = previous?.id === baseline.id ? (baseline.timestamp - previous.timestamp) / 1000 : 0;
+  if (previous?.id === baseline.id && !(seconds > 0)) return { baseline: previous, sample: null };
+  if (!(seconds > 0) || baseline.framesDecoded < previous.framesDecoded ||
+      baseline.bytesReceived < previous.bytesReceived) return { baseline, sample: null };
+  const delta = key => baseline[key] !== null && previous[key] !== null
+    ? Math.max(0, baseline[key] - previous[key]) : null;
+  const decoded = delta("framesDecoded"), received = delta("packetsReceived"), lost = delta("packetsLost");
+  const codec = report.get(inbound.codecId);
+  const transport = report.get(inbound.transportId);
+  const pair = report.get(transport?.selectedCandidatePairId) || [...report.values()].find(stat =>
+    stat.type === "candidate-pair" && stat.nominated && stat.state === "succeeded");
+  const types = [report.get(pair?.localCandidateId)?.candidateType, report.get(pair?.remoteCandidateId)?.candidateType];
+  const sample = {
+    seconds, decodedFrames: decoded, payloadBytes: delta("bytesReceived"),
+    droppedFrames: delta("framesDropped"), receivedPackets: received, lostPackets: lost,
+    decodeSeconds: delta("totalDecodeTime"), bufferSeconds: delta("jitterBufferDelay"),
+    bufferFrames: delta("jitterBufferEmittedCount"), freezes: delta("freezeCount"),
+    codec: codec?.mimeType || null, width: inbound.frameWidth || null, height: inbound.frameHeight || null,
+    route: types.every(Boolean) ? (types.includes("relay") ? "relayed" : "direct") : null,
+    networkRTTMs: Number.isFinite(pair?.currentRoundTripTime) ? pair.currentRoundTripTime * 1000 : null,
+    fps: decoded === null ? null : decoded / seconds,
+    payloadMbps: delta("bytesReceived") === null ? null : delta("bytesReceived") * 8 / seconds / 1e6,
+    packetLossPercent: received !== null && lost !== null && received + lost > 0 ? 100 * lost / (received + lost) : null,
+    decodeMs: decoded > 0 && delta("totalDecodeTime") !== null ? delta("totalDecodeTime") * 1000 / decoded : null,
+    jitterBufferMs: delta("jitterBufferEmittedCount") > 0 && delta("jitterBufferDelay") !== null
+      ? delta("jitterBufferDelay") * 1000 / delta("jitterBufferEmittedCount") : null,
+  };
+  return { baseline, sample };
+}
+
+function summarizePerformance(samples) {
+  const total = key => samples.some(sample => sample[key] === null) ? null :
+    samples.reduce((sum, sample) => sum + sample[key], 0);
+  const ratio = (numerator, denominator, scale = 1) => numerator !== null && denominator > 0
+    ? scale * numerator / denominator : null;
+  const rtt = samples.map(sample => sample.networkRTTMs).filter(Number.isFinite).sort((a, b) => a - b);
+  const packets = total("receivedPackets"), lost = total("lostPackets"), seconds = total("seconds");
+  return {
+    intervals: samples.length, observedSeconds: seconds,
+    fps: ratio(total("decodedFrames"), seconds),
+    videoPayloadMbps: ratio(total("payloadBytes"), seconds, 8 / 1e6),
+    networkRTTMedianMs: rtt.length ? rtt[Math.floor((rtt.length - 1) / 2)] : null,
+    networkRTTP95Ms: rtt.length ? rtt[Math.ceil(rtt.length * .95) - 1] : null,
+    packetLossPercent: packets !== null && lost !== null ? ratio(lost, packets + lost, 100) : null,
+    decodeMs: ratio(total("decodeSeconds"), total("decodedFrames"), 1000),
+    jitterBufferMs: ratio(total("bufferSeconds"), total("bufferFrames"), 1000),
+    droppedFrames: total("droppedFrames"), freezes: total("freezes"),
+    codec: samples.at(-1)?.codec || null,
+    resolution: samples.at(-1)?.width && samples.at(-1)?.height
+      ? `${samples.at(-1).width}×${samples.at(-1).height}` : null,
+    route: samples.at(-1)?.route || null,
+  };
+}
+
+function measurementText(result) {
+  const value = (number, digits = 1) => Number.isFinite(number) ? number.toFixed(digits) : "unavailable";
+  const s = result.summary;
+  return ["Remmie performance measurement", result.reason,
+    `Observed ${value(s.observedSeconds)}s; ${s.resolution || "unknown resolution"}; ${s.codec || "unknown codec"}; ${s.route || "unknown route"}`,
+    `Decoded FPS ${value(s.fps)}; video payload ${value(s.videoPayloadMbps, 3)} Mbps`,
+    `Network RTT median/p95 ${value(s.networkRTTMedianMs)}/${value(s.networkRTTP95Ms)} ms`,
+    `Packet loss ${value(s.packetLossPercent, 2)}%; dropped frames ${s.droppedFrames ?? "unavailable"}; freezes ${s.freezes ?? "unavailable"}`,
+    `Decode ${value(s.decodeMs, 2)} ms/frame; jitter buffer ${value(s.jitterBufferMs)} ms`,
+    "RTT and receiver timings do not measure input-to-screen delay."].join("\n");
+}
+
+function updatePerformance(session, report) {
+  const { baseline, sample } = performanceInterval(report, session.performancePrevious);
+  session.performancePrevious = baseline;
+  if (!sample) return;
+  const number = value => Number.isFinite(value) ? value.toFixed(1) : "?";
+  performanceLive.textContent = `${number(sample.fps)} FPS · ${number(sample.payloadMbps)} Mbps video · ` +
+    `${number(sample.networkRTTMs)} ms network RTT · ${sample.codec || "codec unknown"}`;
+  if (measurement?.session === session) {
+    measurement.samples.push(sample);
+    const remaining = Math.max(0, 60 - (performance.now() - measurement.started) / 1000);
+    performanceSummary.textContent = `Measuring… ${Math.ceil(remaining)}s remaining. Use Wolfie normally, including some scrolling or window movement.`;
+  }
+}
+
+function endMeasurement(reason) {
+  if (!measurement) return;
+  clearTimeout(measurement.timer);
+  lastMeasurement = {
+    version: 1, measuredUTC: measurement.startedUTC, reason,
+    browser: navigator.userAgent, summary: summarizePerformance(measurement.samples),
+    samples: measurement.samples,
+    scope: "Receiver statistics only; video payload excludes transport overhead; no input-to-screen measurement",
+  };
+  measurement = null;
+  performanceSummary.textContent = measurementText(lastMeasurement);
+  performanceCopy.disabled = performanceSave.disabled = false;
+  desktopControls(active);
+}
+
+performanceStart.addEventListener("click", () => {
+  if (!active?.authorized || measurement) return;
+  lastMeasurement = null;
+  performanceCopy.disabled = performanceSave.disabled = true;
+  active.performancePrevious = null;
+  measurement = { session: active, started: performance.now(), startedUTC: new Date().toISOString(), samples: [] };
+  measurement.timer = setTimeout(() => endMeasurement("60-second measurement complete."), 60000);
+  performanceSummary.textContent = "Measuring… use Wolfie normally, including some scrolling or window movement.";
+  desktopControls(active);
+  showRoute(active);
+});
+performanceCopy.addEventListener("click", async () => {
+  if (!lastMeasurement) return;
+  try { await navigator.clipboard.writeText(measurementText(lastMeasurement)); }
+  catch { performanceSummary.focus(); }
+});
+performanceSave.addEventListener("click", () => {
+  if (!lastMeasurement) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(lastMeasurement, null, 2)], { type: "application/json" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "remmie-performance.json";
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
 
 async function connect(password, intent = null) {
   if (active) return;

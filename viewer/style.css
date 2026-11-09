@@ -19,6 +19,9 @@ button:disabled, select:disabled { opacity: 0.5; cursor: default; }
 .details { justify-content: space-between; min-height: 2rem; }
 .details p { margin: 0 0 0.7rem; }
 #status[data-state="error"] { color: #ffaeae; }
+#performance-panel { margin-bottom: 0.75rem; }
+#performance-panel summary { cursor: pointer; }
+#performance-panel pre { white-space: pre-wrap; font: 0.85rem ui-monospace, monospace; }
 .screen { position: relative; height: clamp(240px, calc(100dvh - 17rem), 80dvh); background: #07090b; border: 1px solid #414955; border-radius: 0.5rem; }
 video { width: 100%; height: 100%; object-fit: contain; display: block; touch-action: none; }
 video:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #8ab5ff; outline-offset: 2px; }
