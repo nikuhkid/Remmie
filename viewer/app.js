@@ -26,6 +26,15 @@ const performanceCopy = document.querySelector("#performance-copy");
 const performanceSave = document.querySelector("#performance-save");
 const performanceLive = document.querySelector("#performance-live");
 const performanceSummary = document.querySelector("#performance-summary");
+const sessionMenu = document.querySelector("#session-menu");
+const menuToggle = document.querySelector("#session-toggle");
+const codecSelect = document.querySelector("#video-codec");
+const fpsSelect = document.querySelector("#video-fps");
+const clipboardStatus = document.querySelector("#clipboard-status");
+const fileStatus = document.querySelector("#file-status");
+let clipboardAllowed = false;
+let selectedCodec = "auto";
+let selectedFPS = null;
 let active = null;
 let desired = null;
 let measurement = null;
@@ -72,6 +81,7 @@ function desktopControls(session) {
   const connected = session?.authorized && video.readyState >= 2 &&
     session.peer.connectionState === "connected";
   const features = session?.features || {};
+  const filesBusy = !!(session?.fileBusy || session?.fileCancelling);
   fullscreenButton.disabled = !connected || !workspace.requestFullscreen;
   releaseButton.disabled = !connected;
   relativeButton.disabled = !connected || !features.relativeMouse || !video.requestPointerLock;
@@ -80,6 +90,14 @@ function desktopControls(session) {
   clipboardSend.disabled = clipboardGet.disabled = !connected || !features.clipboard || !!session.pendingControl;
   monitorSelect.disabled = !connected || !session.displays?.length || !!session.pendingControl;
   performanceStart.disabled = !connected || !!measurement;
+  codecSelect.disabled = !connected || !session?.codecs?.length;
+  fpsSelect.disabled = !connected || !features.videoSettings || !!session.pendingControl;
+  document.querySelector("#clipboard-enable").disabled = !connected || !features.clipboardSync;
+  for (const id of ["file-upload", "file-pick"]) {
+    document.querySelector(`#${id}`).disabled = !connected || !features.files || filesBusy;
+  }
+  document.querySelector("#file-download").disabled = !connected || !features.files || !session?.download || filesBusy;
+  document.querySelector("#file-cancel").disabled = !session?.fileBusy || !!session?.fileCancelling;
 }
 
 function stopCapture(session) {
@@ -118,6 +136,11 @@ function completeControl(session) {
   session.pendingControl = null;
   session.monitorChanging = false;
   desktopControls(session);
+  if (session.restoreFPS) {
+    const fps = session.restoreFPS;
+    session.restoreFPS = null;
+    requestControl(session, {type: "video-settings", fps});
+  }
 }
 
 function signalingBase() {
@@ -180,6 +203,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   if (active !== session) return;
   if (measurement?.session === session) endMeasurement("Connection ended; partial measurement.");
   active = null;
+  document.body.classList.remove("connected");
   stopCapture(session);
   const sent = tellHost && send(session, { type: "disconnect" });
   session.abort.abort();
@@ -188,6 +212,9 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   clearInterval(session.statsTimer);
   clearTimeout(session.controlTimer);
   clearTimeout(session.disconnectTimer);
+  clearInterval(session.clipboardTimer);
+  session.fileAbort?.abort();
+  session.fileToken = "";
   session.password = "";
   if (sent) {
     // Give the reliable control message time to leave before closing transport.
@@ -425,6 +452,7 @@ async function connect(password, intent = null) {
   connecting(session, "Contacting signaling…", "Timed out reaching the signaling endpoint.");
   try {
     const base = signalingBase();
+    session.base = base;
     const signal = session.abort.signal;
     const config = await requestJSON(base, "ice", { signal });
     if (active !== session) return;
@@ -432,7 +460,19 @@ async function connect(password, intent = null) {
       "The browser timed out gathering WebRTC network addresses.");
     const peer = new RTCPeerConnection({ iceServers: config.iceServers });
     session.peer = peer;
-    peer.addTransceiver("video", { direction: "recvonly" });
+    const transceiver = peer.addTransceiver("video", { direction: "recvonly" });
+    const browserCodecs = globalThis.RTCRtpReceiver?.getCapabilities("video")?.codecs || [];
+    session.codecs = (config.videoCodecs || []).filter(name => browserCodecs.some(c => c.mimeType.toLowerCase() === `video/${name}`.toLowerCase()));
+    codecSelect.replaceChildren(new Option("Automatic", "auto"), ...session.codecs.map(name => new Option(name, name)));
+    if (!session.codecs.includes(selectedCodec)) selectedCodec = "auto";
+    codecSelect.value = selectedCodec;
+    document.querySelector("#codec-status").textContent = session.codecs.length
+      ? "Shared host/browser support. Changing codec reconnects this session. AV1/VP9 are not integrated in this host."
+      : "This host needs the controls update before codec selection is available.";
+    if (selectedCodec !== "auto") {
+      transceiver.setCodecPreferences(browserCodecs.filter(c =>
+        c.mimeType.toLowerCase() === `video/${selectedCodec}`.toLowerCase() || c.mimeType.toLowerCase() === "video/rtx"));
+    }
     peer.addEventListener("track", event => {
       if (active === session && event.track.kind === "video") {
         video.srcObject = event.streams[0] || new MediaStream([event.track]);
@@ -484,9 +524,21 @@ async function connect(password, intent = null) {
         session.authorized = true;
         session.canInput = message.input === true;
         session.features = message.features || {};
+        session.fileToken = session.features.files ? message.fileToken : null;
+        fileStatus.textContent = session.features.files ? "Ready. Maximum file size: 16 GiB." : "Restart the updated host to enable file transfer.";
+        if (session.features.videoSettings) {
+          fpsSelect.value = String(message.fps);
+          if (selectedFPS && selectedFPS !== message.fps) session.restoreFPS = selectedFPS;
+        }
+        if (session.features.clipboardSync) {
+          session.clip = { baseline: false, busy: false, pending: null, remote: null };
+          session.clipboardTimer = setInterval(() => syncClipboard(session), 750);
+          syncClipboard(session);
+        } else clipboardStatus.textContent = "Restart the updated host to enable automatic bidirectional text sync.";
         session.intent.connected = true;
         session.lastPong = Date.now();
         if (session.features.monitors) session.pendingControl = "monitors-get";
+        else if (session.restoreFPS) completeControl(session);
         help.textContent = session.canInput
           ? "Click the desktop to send input. Ctrl+Alt+Esc releases keyboard and mouse capture."
           : "Local preview. Open the remote viewer on another device for control.";
@@ -511,6 +563,19 @@ async function connect(password, intent = null) {
         monitorSelect.value = String(message.selected);
         session.selectedMonitor = monitorSelect.value;
         completeControl(session);
+      } else if (message?.type === "video-settings" && session.authorized) {
+        selectedFPS = message.fps;
+        fpsSelect.value = String(message.fps);
+        document.querySelector("#video-status").textContent = `Host limit applied: ${message.fps} FPS. Actual delivery is shown in Performance measurements.`;
+        completeControl(session);
+      } else if (message?.type === "clipboard-sync" && session.authorized && session.clip) {
+        if (typeof message.text === "string" && new TextEncoder().encode(message.text).length <= 8192) {
+          session.clip.remote = {text: message.text};
+          syncClipboard(session);
+        }
+      } else if (message?.type === "clipboard-synced" && session.authorized && session.clip) {
+        session.clip.last = message.text;
+        session.clip.pending = null;
       } else if (message?.type === "clipboard-text" && session.authorized) {
         clipboardText.value = message.text;
         completeControl(session);
@@ -519,6 +584,11 @@ async function connect(password, intent = null) {
         completeControl(session);
         controlStatus.textContent = "Wolfie's clipboard updated.";
       } else if (message?.type === "control-error" && session.authorized) {
+        if (message.operation === "clipboard-sync") {
+          if (session.clip) session.clip.pending = null;
+          clipboardStatus.textContent = message.message;
+          return;
+        }
         completeControl(session);
         monitorSelect.value = session.selectedMonitor || "";
         controlStatus.textContent = message.message;
@@ -556,6 +626,7 @@ function showDesktop(session) {
   session.disconnectTimer = null;
   session.intent.attempt = 0;
   empty.hidden = true;
+  document.body.classList.add("connected");
   desktopControls(session);
   show(session.canInput ? "Connected to Wolfie." : "Previewing Wolfie’s desktop.", "connected");
 }
@@ -572,6 +643,7 @@ form.addEventListener("submit", event => {
     return;
   }
   passwordField.value = "";
+  allowClipboard();
   connect(value);
 });
 disconnectButton.addEventListener("click", () => {
@@ -700,6 +772,10 @@ video.addEventListener("keydown", event => {
     releaseButton.focus();
     return;
   }
+  if (event.code === "KeyV" && event.ctrlKey && !event.altKey && session.features.clipboardSync) {
+    if (!event.repeat) pasteClipboard(session);
+    return;
+  }
   send(session, { type: "key", code: event.code, pressed: true });
 });
 
@@ -817,4 +893,238 @@ document.querySelector("#clipboard-copy").addEventListener("click", async () => 
     clipboardText.select();
     controlStatus.textContent = "Press Ctrl+C to copy the selected text.";
   }
+});
+
+function setMenu(open) {
+  sessionMenu.hidden = !open;
+  menuToggle.setAttribute("aria-expanded", String(open));
+  if (!open) menuToggle.focus({preventScroll: true});
+}
+menuToggle.addEventListener("click", () => setMenu(sessionMenu.hidden));
+document.querySelector("#menu-close").addEventListener("click", () => setMenu(false));
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !sessionMenu.hidden && document.pointerLockElement !== video) setMenu(false);
+});
+document.querySelector("#scale-fit").addEventListener("change", event => {
+  document.body.classList.toggle("native-size", !event.target.checked);
+});
+document.querySelector("#smooth-scale").addEventListener("change", event => {
+  document.body.classList.toggle("crisp", !event.target.checked);
+});
+fpsSelect.addEventListener("change", () => {
+  if (active?.features?.videoSettings) requestControl(active, {type: "video-settings", fps: Number(fpsSelect.value)});
+});
+codecSelect.addEventListener("change", () => {
+  const session = active;
+  if (!session?.authorized || !desired) return;
+  selectedCodec = codecSelect.value;
+  finish(session, "Applying the video codec.", "connecting", true, true);
+});
+
+async function localClipboardText() {
+  if (navigator.clipboard?.read) {
+    const items = await navigator.clipboard.read();
+    if (!items.length) return "";
+    for (const item of items) {
+      if (item.types.includes("text/plain")) return (await item.getType("text/plain")).text();
+    }
+    return null;
+  }
+  const text = await navigator.clipboard.readText();
+  return text || null;
+}
+async function allowClipboard() {
+  if (!navigator.clipboard?.readText || !navigator.clipboard?.writeText) {
+    clipboardStatus.textContent = "This browser cannot sync the clipboard automatically. Manual text transfer remains available.";
+    return;
+  }
+  try {
+    await localClipboardText();
+    clipboardAllowed = true;
+    clipboardStatus.textContent = "Bidirectional text sync active while this page has focus.";
+    if (active?.clip) syncClipboard(active);
+  } catch {
+    clipboardAllowed = false;
+    clipboardStatus.textContent = "Clipboard permission is blocked. Use Allow clipboard access, or the manual text transfer below.";
+  }
+}
+document.querySelector("#clipboard-enable").addEventListener("click", allowClipboard);
+async function syncClipboard(session) {
+  const clip = session.clip;
+  if (active !== session || !clipboardAllowed || !clip || clip.busy || clip.pending !== null ||
+      document.hidden || !document.hasFocus()) return;
+  clip.busy = true;
+  try {
+    const text = await localClipboardText();
+    if (active !== session) return;
+    if (!clip.baseline) {
+      clip.last = text;
+      clip.baseline = true;
+    }
+    if (text !== null && text !== clip.last) {
+      if (new TextEncoder().encode(text).length > 8192 || text.includes("\0")) {
+        clipboardStatus.textContent = "Clipboard text exceeds 8 KiB or contains a null character; it was left unchanged.";
+        return;
+      }
+      if (session.pendingControl) return;
+      clip.remote = null;
+      clip.pending = text;
+      send(session, {type: "clipboard-sync", text});
+    } else if (clip.remote) {
+      if (text === null) {
+        clipboardStatus.textContent = "The local clipboard has no plain text; pending remote text is waiting to avoid replacing files or images.";
+        return;
+      }
+      const remote = clip.remote;
+      await navigator.clipboard.writeText(remote.text);
+      if (active !== session) return;
+      clip.last = remote.text;
+      if (clip.remote === remote) clip.remote = null;
+    }
+    clipboardStatus.textContent = "Bidirectional text sync active while this page has focus.";
+  } catch {
+    clipboardAllowed = false;
+    clipboardStatus.textContent = "Clipboard access paused by the browser. Use Allow clipboard access to resume.";
+  } finally { clip.busy = false; }
+}
+async function pasteClipboard(session) {
+  let locked = false;
+  try {
+    if (!clipboardAllowed) throw new Error("Allow clipboard access before pasting local text.");
+    const deadline = Date.now() + 3000;
+    while (session.pendingControl || session.clip?.pending !== null || session.clip?.busy) {
+      if (Date.now() > deadline) throw new Error("Clipboard sync is still running. Try paste again.");
+      await new Promise(resolve => setTimeout(resolve, 25));
+      if (active !== session) return;
+    }
+    session.clip.busy = true;
+    locked = true;
+    const text = await localClipboardText();
+    if (active !== session) return;
+    if (text === null) throw new Error("Local clipboard has no supported plain text.");
+    if (new TextEncoder().encode(text).length > 8192 || text.includes("\0")) throw new Error("Clipboard text exceeds 8 KiB or contains a null character.");
+    session.clip.pending = text;
+    send(session, {type: "clipboard-sync", text, paste: true});
+  } catch (error) {
+    clipboardStatus.textContent = error.message;
+    if (active === session) {
+      show(error.message, "error");
+      setTimeout(() => { if (active === session && status.textContent === error.message) showDesktop(session); }, 4000);
+    }
+  } finally { if (locked) session.clip.busy = false; }
+}
+window.addEventListener("focus", () => { if (active?.clip) syncClipboard(active); });
+
+function fileSize(bytes) {
+  return bytes < 1024**2 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024**2).toFixed(1)} MiB`;
+}
+function fileOptions(session, extra = {}) {
+  return {signal: session.fileAbort.signal, ...extra, headers: {Authorization: `Bearer ${session.fileToken}`, ...extra.headers}};
+}
+async function fileOperation(action) {
+  const session = active;
+  if (!session?.authorized || !session.features.files || session.fileBusy || session.fileCancelling) return;
+  session.fileBusy = true;
+  session.fileAbort = new AbortController();
+  const progress = document.querySelector("#file-progress");
+  progress.hidden = false;
+  progress.value = 0;
+  desktopControls(session);
+  try { await action(session, progress); }
+  catch (error) {
+    if (active === session) fileStatus.textContent = error.name === "AbortError" ? "File operation cancelled." : (error.message || "File transfer failed.");
+  } finally {
+    session.fileBusy = false;
+    if (active === session) { progress.hidden = true; desktopControls(session); }
+  }
+}
+document.querySelector("#file-upload").addEventListener("change", event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  fileOperation(async (session, progress) => {
+    if (file.size > 16 * 1024**3) throw new Error("Files must be at most 16 GiB.");
+    fileStatus.textContent = `Uploading ${file.name}…`;
+    const ticket = await requestJSON(session.base, "files/upload", fileOptions(session, {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: file.name, size: file.size}),
+    }));
+    const result = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const abort = () => xhr.abort();
+      xhr.open("PUT", new URL(`files/upload/${ticket.id}`, session.base));
+      xhr.setRequestHeader("Authorization", `Bearer ${session.fileToken}`);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.upload.onprogress = e => { if (e.lengthComputable) progress.value = 100 * e.loaded / e.total; };
+      const cleanup = () => session.fileAbort.signal.removeEventListener("abort", abort);
+      xhr.onload = () => {
+        cleanup();
+        let payload; try { payload = JSON.parse(xhr.responseText); } catch { /* handled below */ }
+        if (xhr.status >= 200 && xhr.status < 300 && payload) resolve(payload);
+        else reject(new Error(payload?.error || `Upload failed (HTTP ${xhr.status}).`));
+      };
+      xhr.onerror = () => { cleanup(); reject(new Error("The upload connection failed.")); };
+      xhr.onabort = () => { cleanup(); reject(new DOMException("Cancelled", "AbortError")); };
+      session.fileAbort.signal.addEventListener("abort", abort, {once: true});
+    if (session.fileAbort.signal.aborted) {
+      cleanup(); reject(new DOMException("Cancelled", "AbortError"));
+    } else xhr.send(file);
+    });
+    if (active === session) fileStatus.textContent = `Uploaded ${result.name} (${fileSize(result.size)}) to ${result.folder}.`;
+  });
+});
+document.querySelector("#file-pick").addEventListener("click", () => fileOperation(async session => {
+  fileStatus.textContent = "Choose a file in the picker on Wolfie’s desktop. Cancel is available here.";
+  const selected = await requestJSON(session.base, "files/pick", fileOptions(session, {method: "POST"}));
+  if (active !== session) return;
+  session.download = selected.cancelled ? null : selected;
+  document.querySelector("#file-selected").textContent = session.download ? `${selected.name} · ${fileSize(selected.size)}` : "No download selected.";
+  fileStatus.textContent = selected.cancelled ? "File selection cancelled." : "Ready to download.";
+}));
+document.querySelector("#file-download").addEventListener("click", () => fileOperation(async (session, progress) => {
+  const selected = session.download;
+  let writable = null;
+  try {
+    if (globalThis.showSaveFilePicker) {
+      // Called before awaiting the network, while this click still grants user activation.
+      const handle = await showSaveFilePicker({suggestedName: selected.name});
+      writable = await handle.createWritable();
+    } else if (selected.size > 128 * 1024**2) {
+      throw new Error("Downloads above 128 MiB need a Chromium browser with Save File Picker support.");
+    }
+    fileStatus.textContent = `Downloading ${selected.name}…`;
+    const response = await fetch(new URL(`files/download/${selected.id}`, session.base), {
+      cache: "no-store", credentials: "omit", redirect: "error", ...fileOptions(session),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || `Download failed (HTTP ${response.status}).`);
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > selected.size) { await reader.cancel(); throw new Error("File size changed during the transfer."); }
+      if (writable) await writable.write(value); else chunks.push(value);
+      progress.value = selected.size ? 100 * total / selected.size : 100;
+    }
+    if (total !== selected.size) throw new Error("The download was incomplete.");
+    if (writable) { await writable.close(); writable = null; }
+    else {
+      const url = URL.createObjectURL(new Blob(chunks));
+      const link = document.createElement("a");
+      link.href = url; link.download = selected.name; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+    if (active === session) fileStatus.textContent = `Downloaded ${selected.name} (${fileSize(total)}).`;
+  } finally { if (writable) await writable.abort().catch(() => {}); }
+}));
+document.querySelector("#file-cancel").addEventListener("click", () => {
+  const session = active;
+  if (!session?.fileBusy) return;
+  session.fileCancelling = true;
+  desktopControls(session);
+  session.fileAbort.abort();
+  requestJSON(session.base, "files/cancel", {method: "POST", headers: {Authorization: `Bearer ${session.fileToken}`}, signal: session.abort.signal})
+    .catch(() => { if (active === session) fileStatus.textContent = "Cancellation was not acknowledged. Reconnect before starting another transfer."; })
+    .finally(() => { session.fileCancelling = false; if (active === session) desktopControls(session); });
 });
