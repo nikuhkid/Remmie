@@ -167,6 +167,14 @@ function signalingBase() {
   return url;
 }
 
+function videoCodecSupported(codec, name) {
+  if (codec.mimeType.toLowerCase() !== `video/${name}`.toLowerCase()) return false;
+  const params = new URLSearchParams((codec.sdpFmtpLine || "").trim().replace(/\s*;\s*/g, "&"));
+  if (name === "VP9") return Number(params.get("profile-id") || 0) === 0;
+  if (name === "AV1") return Number(params.get("profile") || 0) === 0 && Number(params.get("level-idx") || 5) >= 5;
+  return true;
+}
+
 async function requestJSON(base, path, options) {
   const response = await fetch(new URL(path, base), {
     cache: "no-store",
@@ -462,16 +470,17 @@ async function connect(password, intent = null) {
     session.peer = peer;
     const transceiver = peer.addTransceiver("video", { direction: "recvonly" });
     const browserCodecs = globalThis.RTCRtpReceiver?.getCapabilities("video")?.codecs || [];
-    session.codecs = (config.videoCodecs || []).filter(name => browserCodecs.some(c => c.mimeType.toLowerCase() === `video/${name}`.toLowerCase()));
-    codecSelect.replaceChildren(new Option("Automatic", "auto"), ...session.codecs.map(name => new Option(name, name)));
+    session.codecs = (config.videoCodecs || []).filter(name => browserCodecs.some(c => videoCodecSupported(c, name)));
+    codecSelect.replaceChildren(new Option("Automatic", "auto"), ...session.codecs.map(name =>
+      new Option(config.videoEncoders?.[name] ? `${name} · ${config.videoEncoders[name]}` : name, name)));
     if (!session.codecs.includes(selectedCodec)) selectedCodec = "auto";
     codecSelect.value = selectedCodec;
     document.querySelector("#codec-status").textContent = session.codecs.length
-      ? "Shared host/browser support. Changing codec reconnects this session. AV1/VP9 are not integrated in this host."
+      ? "Available on both devices. Changing codec reconnects this session."
       : "This host needs the controls update before codec selection is available.";
     if (selectedCodec !== "auto") {
       transceiver.setCodecPreferences(browserCodecs.filter(c =>
-        c.mimeType.toLowerCase() === `video/${selectedCodec}`.toLowerCase() || c.mimeType.toLowerCase() === "video/rtx"));
+        videoCodecSupported(c, selectedCodec) || c.mimeType.toLowerCase() === "video/rtx"));
     }
     peer.addEventListener("track", event => {
       if (active === session && event.track.kind === "video") {
@@ -525,10 +534,14 @@ async function connect(password, intent = null) {
         session.canInput = message.input === true;
         session.features = message.features || {};
         session.fileToken = session.features.files ? message.fileToken : null;
+        session.maxFPS = message.maxFPS || 60;
+        for (const option of fpsSelect.options) option.disabled = Number(option.value) > session.maxFPS;
+        if (message.videoCodec) document.querySelector("#codec-status").textContent =
+          `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoCodec === "AV1" ? " · up to 720p/30 FPS for the negotiated AV1 level" : ""}. Changing codec reconnects this session.`;
         fileStatus.textContent = session.features.files ? "Ready. Maximum file size: 16 GiB." : "Restart the updated host to enable file transfer.";
         if (session.features.videoSettings) {
           fpsSelect.value = String(message.fps);
-          if (selectedFPS && selectedFPS !== message.fps) session.restoreFPS = selectedFPS;
+          if (selectedFPS && selectedFPS !== message.fps) session.restoreFPS = Math.min(selectedFPS, session.maxFPS);
         }
         if (session.features.clipboardSync) {
           session.clip = { baseline: false, busy: false, pending: null, remote: null };
@@ -592,6 +605,10 @@ async function connect(password, intent = null) {
         completeControl(session);
         monitorSelect.value = session.selectedMonitor || "";
         controlStatus.textContent = message.message;
+      } else if (message?.type === "codec-error" && session.authorized) {
+        selectedCodec = "auto";
+        selectedFPS = Math.min(selectedFPS || 20, 30);
+        finish(session, message.message, "connecting", true, true);
       } else if (message?.type === "denied" || message?.type === "error") {
         finish(session, message.message, "error");
       } else if (message?.type === "input-error") {
