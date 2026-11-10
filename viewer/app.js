@@ -1,4 +1,6 @@
 const form = document.querySelector("#connect-form");
+const serverField = document.querySelector("#server");
+const serverLabel = document.querySelector("#server-label");
 const passwordField = document.querySelector("#password");
 const connectButton = document.querySelector("#connect");
 const disconnectButton = document.querySelector("#disconnect");
@@ -59,7 +61,7 @@ function reconnect(intent, reason) {
   if (desired !== intent) return;
   connectButton.disabled = true;
   disconnectButton.disabled = false;
-  passwordField.disabled = true;
+  serverField.disabled = passwordField.disabled = true;
   if (navigator.onLine === false) {
     show("Network offline. Remmie will reconnect when it returns.", "connecting");
     return;
@@ -157,29 +159,28 @@ function completeControl(session) {
   }
 }
 
-function signalingBase() {
-  const configured = new URL(location.href).searchParams.get("signal");
-  const value = configured || (location.origin === "https://nikuhkid.github.io"
-    ? "https://nikuhkid.ddns.net/api/" : null);
-  if (!value) {
-    const loopback = ["127.0.0.1", "localhost"].includes(location.hostname);
-    const lan = location.protocol === "https:" && /^\d+(?:\.\d+){3}$/.test(location.hostname);
-    if (!loopback && !lan && location.hostname !== "nikuhkid.ddns.net") {
-      throw new Error("This viewer link needs a Remmie signaling address.");
-    }
-    return new URL("./api/", location.href);
+function signalingBase(value) {
+  const address = typeof value === "string" ? value.trim() : "";
+  if (!address) throw new Error("Enter your Remmie server address.");
+  if (address.length > 2048 || /[\s\\]/.test(address)) throw new Error("Enter a valid server hostname or HTTPS URL.");
+  let url;
+  try { url = new URL(address.includes("://") ? address : `https://${address}`); }
+  catch { throw new Error("Enter a valid server hostname or HTTPS URL."); }
+  const local = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !(local && url.protocol === "http:")) ||
+      url.username || url.password || url.search || url.hash) {
+    throw new Error("Use HTTPS for your server, without credentials, a query or a fragment. HTTP is available for localhost testing.");
   }
-  const url = new URL(value);
-  const loopback = url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname);
-  if (
-    (url.protocol !== "https:" && !loopback) || url.username || url.password ||
-    url.search || url.hash || !/^\/api(?:\/[a-f0-9]{32})?\/?$/.test(url.pathname)
-  ) {
-    throw new Error("The Remmie signaling address is invalid.");
-  }
+  if (url.pathname === "/") url.pathname = "/api/";
+  else if (!/^\/api(?:\/[a-f0-9]{32})?\/?$/.test(url.pathname))
+    throw new Error("Use the server address or its Remmie /api/ endpoint.");
   if (!url.pathname.endsWith("/")) url.pathname += "/";
   return url;
 }
+
+// Existing explicit signaling links prefill the visible field; they never auto-connect.
+const linkedServer = new URL(location.href).searchParams.get("signal");
+if (linkedServer) serverField.value = linkedServer;
 
 function videoCodecSupported(codec, name) {
   if (codec.mimeType.toLowerCase() !== `video/${name}`.toLowerCase()) return false;
@@ -247,9 +248,10 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   video.srcObject = null;
   audio.pause();
   audio.srcObject = null;
-  audioStatus.textContent = "Connect to hear Wolfie’s playback output.";
+  audioStatus.textContent = "Connect to hear remote audio.";
   empty.hidden = false;
   route.textContent = "";
+  serverLabel.textContent = "Remote desktop";
   performanceLive.textContent = "Connect to read stream statistics.";
   help.textContent = "";
   controlStatus.textContent = "";
@@ -260,7 +262,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   if (document.fullscreenElement === workspace) document.exitFullscreen().catch(() => {});
   connectButton.disabled = false;
   disconnectButton.disabled = true;
-  passwordField.disabled = false;
+  serverField.disabled = passwordField.disabled = false;
   if (recover && desired === session.intent && session.intent.connected) {
     reconnect(session.intent, message);
   } else {
@@ -272,7 +274,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
 function heartbeat(session) {
   if (active !== session) return;
   if (session.features?.heartbeat && Date.now() - session.lastPong > 15000) {
-    finish(session, "Wolfie stopped responding.", "error", true, true);
+    finish(session, "The remote host stopped responding.", "error", true, true);
     return;
   }
   send(session, { type: "ping" });
@@ -410,7 +412,7 @@ function updatePerformance(session, report) {
   if (measurement?.session === session) {
     measurement.samples.push(sample);
     const remaining = Math.max(0, 60 - (performance.now() - measurement.started) / 1000);
-    performanceSummary.textContent = `Measuring… ${Math.ceil(remaining)}s remaining. Use Wolfie normally, including some scrolling or window movement.`;
+    performanceSummary.textContent = `Measuring… ${Math.ceil(remaining)}s remaining. Use the remote desktop normally, including some scrolling or window movement.`;
   }
 }
 
@@ -436,7 +438,7 @@ performanceStart.addEventListener("click", () => {
   active.performancePrevious = null;
   measurement = { session: active, started: performance.now(), startedUTC: new Date().toISOString(), samples: [] };
   measurement.timer = setTimeout(() => endMeasurement("60-second measurement complete."), 60000);
-  performanceSummary.textContent = "Measuring… use Wolfie normally, including some scrolling or window movement.";
+  performanceSummary.textContent = "Measuring… use the remote desktop normally, including some scrolling or window movement.";
   desktopControls(active);
   showRoute(active);
 });
@@ -458,10 +460,15 @@ performanceSave.addEventListener("click", () => {
 async function connect(password, intent = null) {
   if (active) return;
   if (!intent) {
+    let base;
+    try { base = signalingBase(serverField.value); }
+    catch (error) { show(error.message, "error"); serverField.focus(); return; }
     forgetConnection();
-    desired = intent = { password, connected: false, attempt: 0 };
+    serverField.value = base.href;
+    desired = intent = { password, server: base.href, connected: false, attempt: 0 };
   }
   if (desired !== intent) return;
+  serverField.value = intent.server;
   const session = {
     password,
     intent,
@@ -473,11 +480,13 @@ async function connect(password, intent = null) {
   active = session;
   connectButton.disabled = true;
   disconnectButton.disabled = false;
-  passwordField.disabled = true;
+  serverField.disabled = passwordField.disabled = true;
   connecting(session, "Contacting signaling…", "Timed out reaching the signaling endpoint.");
   try {
-    const base = signalingBase();
+    // Recovery always uses the destination chosen at Connect, even if the field changes.
+    const base = new URL(intent.server);
     session.base = base;
+    serverLabel.textContent = base.host;
     const signal = session.abort.signal;
     const config = await requestJSON(base, "ice", { signal });
     if (active !== session) return;
@@ -513,7 +522,7 @@ async function connect(password, intent = null) {
       if (active !== session) return;
       if (peer.connectionState === "failed") {
         const message = peer.iceConnectionState === "failed"
-          ? "WebRTC could not find a working network path to Wolfie."
+          ? "WebRTC could not find a working network path to the server."
           : "The WebRTC transport failed.";
         finish(session, message, "error", false, true);
       } else if (peer.connectionState === "disconnected") {
@@ -541,7 +550,7 @@ async function connect(password, intent = null) {
     });
     channel.addEventListener("open", () => {
       if (active !== session) return;
-      connecting(session, "Checking password…", "Wolfie did not reply to the password check.");
+      connecting(session, "Checking password…", "The host did not reply to the password check.");
       send(session, { type: "auth", password: session.password });
       session.password = "";
     });
@@ -591,7 +600,7 @@ async function connect(password, intent = null) {
         help.textContent = session.canInput
           ? "Click the desktop to send input. Ctrl+Alt+Esc releases keyboard and mouse capture."
           : "Local preview. Open the remote viewer on another device for control.";
-        connecting(session, "Waiting for Wolfie’s desktop…",
+        connecting(session, "Waiting for the remote desktop…",
           "Password accepted, but desktop video did not start.");
         session.pingTimer = setInterval(() => heartbeat(session), 5000);
         heartbeat(session);
@@ -635,10 +644,10 @@ async function connect(password, intent = null) {
       } else if (message?.type === "clipboard-text" && session.authorized) {
         clipboardText.value = message.text;
         completeControl(session);
-        controlStatus.textContent = "Text received from Wolfie. Choose Copy locally to use it here.";
+        controlStatus.textContent = "Text received from the host. Choose Copy locally to use it here.";
       } else if (message?.type === "clipboard-set" && session.authorized) {
         completeControl(session);
-        controlStatus.textContent = "Wolfie's clipboard updated.";
+        controlStatus.textContent = "The remote clipboard was updated.";
       } else if (message?.type === "control-error" && session.authorized) {
         if (message.operation === "clipboard-sync") {
           if (session.clip) session.clip.pending = null;
@@ -661,7 +670,7 @@ async function connect(password, intent = null) {
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer, signal);
     if (active !== session) return;
-    connecting(session, "Waiting for Wolfie’s WebRTC answer…", "Wolfie’s WebRTC answer timed out.");
+    connecting(session, "Waiting for the server’s WebRTC answer…", "The server’s WebRTC answer timed out.");
     const answer = await requestJSON(base, "offer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -670,7 +679,7 @@ async function connect(password, intent = null) {
     });
     if (active === session) {
       connecting(session, "Checking WebRTC network paths…",
-        "Wolfie answered, but WebRTC timed out checking network paths.");
+        "The server answered, but WebRTC timed out checking network paths.");
       await peer.setRemoteDescription(answer);
     }
   } catch (error) {
@@ -688,7 +697,7 @@ function showDesktop(session) {
   empty.hidden = true;
   document.body.classList.add("connected");
   desktopControls(session);
-  show(session.canInput ? "Connected to Wolfie." : "Previewing Wolfie’s desktop.", "connected");
+  show(session.canInput ? "Connected to the remote desktop." : "Previewing the remote desktop.", "connected");
 }
 
 video.addEventListener("playing", () => {
@@ -699,9 +708,11 @@ form.addEventListener("submit", event => {
   event.preventDefault();
   const value = passwordField.value;
   if (Array.from(value).length < 8 || new TextEncoder().encode(value).length > 256) {
-    show("Use the password set on Wolfie. It must be at least eight characters.", "error");
+    show("Use the password set on the host. It must be at least eight characters.", "error");
     return;
   }
+  try { signalingBase(serverField.value); }
+  catch (error) { show(error.message, "error"); serverField.focus(); return; }
   passwordField.value = "";
   allowClipboard();
   connect(value);
@@ -712,7 +723,7 @@ disconnectButton.addEventListener("click", () => {
     forgetConnection();
     connectButton.disabled = false;
     disconnectButton.disabled = true;
-    passwordField.disabled = false;
+    serverField.disabled = passwordField.disabled = false;
     show("Disconnected.");
   }
 });
@@ -926,10 +937,10 @@ clipboardToggle.addEventListener("click", () => {
 document.querySelector("#clipboard-read").addEventListener("click", async () => {
   try {
     clipboardText.value = await navigator.clipboard.readText();
-    controlStatus.textContent = "Local text loaded. Choose Send to Wolfie to transfer it.";
+    controlStatus.textContent = "Local text loaded. Choose Send to host to transfer it.";
   } catch {
     clipboardText.focus();
-    controlStatus.textContent = "Paste into the text box with Ctrl+V, then choose Send to Wolfie.";
+    controlStatus.textContent = "Paste into the text box with Ctrl+V, then choose Send to host.";
   }
 });
 clipboardSend.addEventListener("click", () => {
@@ -1080,9 +1091,9 @@ function updateAudio(session) {
   audioToggle.textContent = session.audioBlocked ? "Enable sound" : audioWanted ? "Mute sound" : "Unmute sound";
   if (!session.features?.audio) audioStatus.textContent = "This host does not provide desktop audio.";
   else if (!audioWanted || Number(audioVolume.value) === 0) audioStatus.textContent = "Sound muted in this browser.";
-  else if (session.audioState === "unavailable") audioStatus.textContent = "Wolfie’s playback output is unavailable. Retrying automatically; video stays connected.";
+  else if (session.audioState === "unavailable") audioStatus.textContent = "The host’s playback output is unavailable. Retrying automatically; video stays connected.";
   else if (session.audioBlocked) audioStatus.textContent = "This browser blocked sound. Click Enable sound to allow playback.";
-  else audioStatus.textContent = session.audioState === "capturing" ? "Windows playback → Opus · 48 kHz stereo. No microphone." : "Waiting for Wolfie’s playback audio…";
+  else audioStatus.textContent = session.audioState === "capturing" ? "Windows playback → Opus · 48 kHz stereo. No microphone." : "Waiting for remote audio…";
 }
 async function playAudio(session) {
   if (active !== session) return;
@@ -1163,7 +1174,7 @@ document.querySelector("#file-upload").addEventListener("change", event => {
   });
 });
 document.querySelector("#file-pick").addEventListener("click", () => fileOperation(async session => {
-  fileStatus.textContent = "Choose a file in the picker on Wolfie’s desktop. Cancel is available here.";
+  fileStatus.textContent = "Choose a file in the picker on the remote desktop. Cancel is available here.";
   const selected = await requestJSON(session.base, "files/pick", fileOptions(session, {method: "POST"}));
   if (active !== session) return;
   session.download = selected.cancelled ? null : selected;
@@ -1190,7 +1201,7 @@ document.querySelector("#file-download").addEventListener("click", () => fileOpe
       if (active !== session || session.fileAbort.signal.aborted) return;
       const target = new URL(grant.path, session.base);
       if (target.origin !== session.base.origin || !target.pathname.startsWith(session.base.pathname + "files/browser-download/"))
-        throw new Error("Wolfie returned an invalid download link.");
+        throw new Error("The host returned an invalid download link.");
       const link = document.createElement("a");
       link.href = target; link.target = "remmie-download"; link.referrerPolicy = "no-referrer";
       document.body.append(link); link.click(); link.remove();

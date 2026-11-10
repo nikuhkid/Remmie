@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer"><title>Remmie</title>
-  <link rel="stylesheet" href="./style.css?v=audio-resolution-1">
-  <script type="module" src="./app.js?v=audio-resolution-1"></script>
+  <link rel="stylesheet" href="./style.css?v=server-selection-1">
+  <script type="module" src="./app.js?v=server-selection-1"></script>
 </head>
 <body>
   <header id="connection-card">
-    <h1>Remmie <span>Wolfie</span></h1>
+    <h1>Remmie <span>Remote desktop</span></h1>
     <form id="connect-form">
+      <label for="server">Server</label>
+      <input id="server" type="text" required maxlength="2048" autocomplete="url" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="desktop.example.net" aria-describedby="server-help">
+      <p id="server-help" class="help">Enter the hostname or HTTPS URL of a compatible Remmie host.</p>
       <label for="password">Remmie password</label>
       <input id="password" type="password" required maxlength="256" autocomplete="current-password">
       <button id="connect" type="submit">Connect</button>
@@ -17,15 +20,15 @@
   </header>
   <main id="workspace">
     <div class="screen">
-      <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Wolfie’s desktop"></video>
+      <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Remote desktop"></video>
       <audio id="desktop-audio" autoplay hidden></audio>
       <iframe name="remmie-download" id="download-frame" title="Browser download" hidden></iframe>
-      <p id="empty">Wolfie’s desktop will appear here.</p>
+      <p id="empty">The remote desktop will appear here.</p>
     </div>
     <p id="status" role="status">Ready to connect.</p>
     <button id="session-toggle" type="button" aria-expanded="false" aria-controls="session-menu">Remmie</button>
     <aside id="session-menu" aria-label="Session menu" hidden>
-      <div class="menu-heading"><strong>Wolfie</strong><button id="menu-close" type="button" aria-label="Close session menu">Close</button></div>
+      <div class="menu-heading"><strong id="server-label">Remote desktop</strong><button id="menu-close" type="button" aria-label="Close session menu">Close</button></div>
       <p id="route" class="help">Private desktop</p>
       <div class="toolbar">
         <button id="disconnect" type="button" disabled>Disconnect</button>
@@ -54,7 +57,7 @@
       <details><summary>Sound</summary><div class="section-body">
         <button id="audio-toggle" type="button" disabled>Enable sound</button>
         <label for="audio-volume">Volume</label><input id="audio-volume" type="range" min="0" max="100" value="100" disabled>
-        <p id="audio-status" role="status" class="help">Connect to hear Wolfie’s playback output. Microphone sharing is off.</p>
+        <p id="audio-status" role="status" class="help">Connect to hear remote audio. Microphone sharing is off.</p>
       </div></details>
       <details><summary>Input controls</summary><div class="section-body">
         <button id="relative" type="button" aria-pressed="false" disabled>Relative mouse</button>
@@ -76,17 +79,17 @@
         <textarea id="clipboard-text" rows="4" spellcheck="false"></textarea>
         <div class="toolbar">
           <button id="clipboard-read" type="button">Read local clipboard</button>
-          <button id="clipboard-send" type="button">Send to Wolfie</button>
-          <button id="clipboard-get" type="button">Get from Wolfie</button>
+          <button id="clipboard-send" type="button">Send to host</button>
+          <button id="clipboard-get" type="button">Get from host</button>
           <button id="clipboard-copy" type="button">Copy locally</button>
         </div>
       </section>
 
       </div></details>
       <details><summary>Files</summary><div class="section-body">
-        <label for="file-upload">Upload to Wolfie</label><input id="file-upload" type="file" disabled>
-        <p class="help">Saved in Wolfie’s Downloads/Remmie. Existing files are kept.</p>
-        <button id="file-pick" type="button" disabled>Choose a file on Wolfie</button>
+        <label for="file-upload">Upload to host</label><input id="file-upload" type="file" disabled>
+        <p class="help">Saved in the host’s Downloads/Remmie. Existing files are kept.</p>
+        <button id="file-pick" type="button" disabled>Choose a file on the host</button>
         <p id="file-selected" class="help">No download selected.</p>
         <button id="file-download" type="button" disabled>Download selected file</button>
         <progress id="file-progress" max="100" value="0" hidden aria-label="File transfer progress"></progress>

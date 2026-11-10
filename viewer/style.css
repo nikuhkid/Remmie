@@ -21,6 +21,7 @@ body.connected #status[data-state="connected"] { opacity: 0; }
 #session-toggle[aria-expanded="true"] { background: #3a4858; }
 #session-menu { position: absolute; z-index: 7; left: 12px; top: 55px; width: 330px; max-width: calc(100% - 24px); max-height: calc(100dvh - 67px); overflow: auto; padding: 14px 12px; background: #202123; border: 1px solid #4b4c50; border-radius: 4px; box-shadow: 0 8px 32px #0009; }
 .menu-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 0 6px; } .menu-heading strong { font-size: 17px; } #menu-close { padding: 4px 8px; font-size: 12px; }
+.menu-heading strong { min-width: 0; overflow-wrap: anywhere; }
 #route { margin-top: 0; overflow-wrap: anywhere; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; align-items: center; } .toolbar > * { flex: 1; min-width: 0; }
 #disconnect { color: #ff9690; } #relative[aria-pressed="true"] { background: #315d48; }
