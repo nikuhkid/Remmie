@@ -29,6 +29,14 @@ const performanceSummary = document.querySelector("#performance-summary");
 const sessionMenu = document.querySelector("#session-menu");
 const menuToggle = document.querySelector("#session-toggle");
 const codecSelect = document.querySelector("#video-codec");
+const audio = document.querySelector("#desktop-audio");
+const audioToggle = document.querySelector("#audio-toggle");
+const audioVolume = document.querySelector("#audio-volume");
+const audioStatus = document.querySelector("#audio-status");
+const resolutionSelect = document.querySelector("#video-resolution");
+const resolutionSizes = ["native", "3840x2160", "3840x1600", "3440x1440", "2560x1600", "2560x1440", "2560x1080", "1920x1200", "1920x1080", "1680x1050", "1600x1200", "1600x900", "1366x768", "1280x1024", "1280x800", "1280x720", "1024x768", "960x540", "640x360"];
+let selectedResolution = null;
+let audioWanted = true;
 const fpsSelect = document.querySelector("#video-fps");
 const clipboardStatus = document.querySelector("#clipboard-status");
 const fileStatus = document.querySelector("#file-status");
@@ -91,6 +99,8 @@ function desktopControls(session) {
   monitorSelect.disabled = !connected || !session.displays?.length || !!session.pendingControl;
   performanceStart.disabled = !connected || !!measurement;
   codecSelect.disabled = !connected || !session?.codecs?.length;
+  resolutionSelect.disabled = !connected || !features.resolutions || !!session.pendingControl;
+  audioToggle.disabled = audioVolume.disabled = !session?.authorized || !features.audio;
   fpsSelect.disabled = !connected || !features.videoSettings || !!session.pendingControl;
   document.querySelector("#clipboard-enable").disabled = !connected || !features.clipboardSync;
   for (const id of ["file-upload", "file-pick"]) {
@@ -140,6 +150,10 @@ function completeControl(session) {
     const fps = session.restoreFPS;
     session.restoreFPS = null;
     requestControl(session, {type: "video-settings", fps});
+  } else if (session.restoreResolution) {
+    const resolution = session.restoreResolution;
+    session.restoreResolution = null;
+    requestControl(session, {type: "video-settings", resolution});
   }
 }
 
@@ -231,6 +245,9 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
     session.peer?.close();
   }
   video.srcObject = null;
+  audio.pause();
+  audio.srcObject = null;
+  audioStatus.textContent = "Connect to hear Wolfie’s playback output.";
   empty.hidden = false;
   route.textContent = "";
   performanceLive.textContent = "Connect to read stream statistics.";
@@ -469,6 +486,7 @@ async function connect(password, intent = null) {
     const peer = new RTCPeerConnection({ iceServers: config.iceServers });
     session.peer = peer;
     const transceiver = peer.addTransceiver("video", { direction: "recvonly" });
+    if (config.audio === true) peer.addTransceiver("audio", {direction: "recvonly"});
     const browserCodecs = globalThis.RTCRtpReceiver?.getCapabilities("video")?.codecs || [];
     session.codecs = (config.videoCodecs || []).filter(name => browserCodecs.some(c => videoCodecSupported(c, name)));
     codecSelect.replaceChildren(new Option("Automatic", "auto"), ...session.codecs.map(name =>
@@ -486,6 +504,9 @@ async function connect(password, intent = null) {
       if (active === session && event.track.kind === "video") {
         video.srcObject = event.streams[0] || new MediaStream([event.track]);
         video.play().catch(() => {});
+      } else if (active === session && event.track.kind === "audio") {
+        audio.srcObject = new MediaStream([event.track]);
+        playAudio(session);
       }
     });
     peer.addEventListener("connectionstatechange", () => {
@@ -533,6 +554,21 @@ async function connect(password, intent = null) {
         session.authorized = true;
         session.canInput = message.input === true;
         session.features = message.features || {};
+        session.audioState = "starting";
+        updateAudio(session);
+        playAudio(session);
+        session.resolutions = Array.isArray(message.resolutions) ? message.resolutions : [];
+        resolutionSelect.replaceChildren(...resolutionSizes.map(size => {
+          const option = new Option(size === "native" ? "Host size (within codec limits)" : size.replace("x", "×"), size);
+          option.disabled = !session.resolutions.includes(size);
+          return option;
+        }));
+        resolutionSelect.value = message.resolution || "1280x720";
+        if (selectedResolution && session.resolutions.includes(selectedResolution) && selectedResolution !== message.resolution)
+          session.restoreResolution = selectedResolution;
+        document.querySelector("#resolution-status").textContent = session.features.resolutions
+          ? `Fits within the selected size; no stretching or upscaling. Windows display mode stays the same.${message.videoCodec === "AV1" ? " This AV1 session is limited to 1280×720." : ""}`
+          : "This host needs the resolution update.";
         session.fileToken = session.features.files ? message.fileToken : null;
         session.maxFPS = message.maxFPS || 60;
         for (const option of fpsSelect.options) option.disabled = Number(option.value) > session.maxFPS;
@@ -551,7 +587,7 @@ async function connect(password, intent = null) {
         session.intent.connected = true;
         session.lastPong = Date.now();
         if (session.features.monitors) session.pendingControl = "monitors-get";
-        else if (session.restoreFPS) completeControl(session);
+        else if (session.restoreFPS || session.restoreResolution) completeControl(session);
         help.textContent = session.canInput
           ? "Click the desktop to send input. Ctrl+Alt+Esc releases keyboard and mouse capture."
           : "Local preview. Open the remote viewer on another device for control.";
@@ -579,8 +615,15 @@ async function connect(password, intent = null) {
       } else if (message?.type === "video-settings" && session.authorized) {
         selectedFPS = message.fps;
         fpsSelect.value = String(message.fps);
+        if (message.resolution) {
+          selectedResolution = message.resolution;
+          resolutionSelect.value = message.resolution;
+        }
         document.querySelector("#video-status").textContent = `Host limit applied: ${message.fps} FPS. Actual delivery is shown in Performance measurements.`;
         completeControl(session);
+      } else if (message?.type === "audio-state" && session.authorized) {
+        session.audioState = message.state;
+        updateAudio(session);
       } else if (message?.type === "clipboard-sync" && session.authorized && session.clip) {
         if (typeof message.text === "string" && new TextEncoder().encode(message.text).length <= 8192) {
           session.clip.remote = {text: message.text};
@@ -1032,6 +1075,36 @@ async function pasteClipboard(session) {
 }
 window.addEventListener("focus", () => { if (active?.clip) syncClipboard(active); });
 
+function updateAudio(session) {
+  if (active !== session) return;
+  audioToggle.textContent = session.audioBlocked ? "Enable sound" : audioWanted ? "Mute sound" : "Unmute sound";
+  if (!session.features?.audio) audioStatus.textContent = "This host does not provide desktop audio.";
+  else if (!audioWanted || Number(audioVolume.value) === 0) audioStatus.textContent = "Sound muted in this browser.";
+  else if (session.audioState === "unavailable") audioStatus.textContent = "Wolfie’s playback output is unavailable. Retrying automatically; video stays connected.";
+  else if (session.audioBlocked) audioStatus.textContent = "This browser blocked sound. Click Enable sound to allow playback.";
+  else audioStatus.textContent = session.audioState === "capturing" ? "Windows playback → Opus · 48 kHz stereo. No microphone." : "Waiting for Wolfie’s playback audio…";
+}
+async function playAudio(session) {
+  if (active !== session) return;
+  audio.muted = !session.authorized || !audioWanted;
+  audio.volume = Number(audioVolume.value) / 100;
+  if (session.authorized && session.features?.audio && audioWanted && audio.srcObject) {
+    try { await audio.play(); session.audioBlocked = false; }
+    catch { session.audioBlocked = true; }
+  }
+  updateAudio(session);
+}
+audioToggle.addEventListener("click", () => {
+  if (!active?.features?.audio) return;
+  if (!active.audioBlocked) audioWanted = !audioWanted;
+  else audioWanted = true;
+  playAudio(active);
+});
+audioVolume.addEventListener("input", () => { if (active) playAudio(active); });
+resolutionSelect.addEventListener("change", () => {
+  if (active?.features?.resolutions) requestControl(active, {type: "video-settings", resolution: resolutionSelect.value});
+});
+
 function fileSize(bytes) {
   return bytes < 1024**2 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024**2).toFixed(1)} MiB`;
 }
@@ -1103,11 +1176,29 @@ document.querySelector("#file-download").addEventListener("click", () => fileOpe
   try {
     if (globalThis.showSaveFilePicker) {
       // Called before awaiting the network, while this click still grants user activation.
-      const handle = await showSaveFilePicker({suggestedName: selected.name});
-      writable = await handle.createWritable();
-    } else if (selected.size > 128 * 1024**2) {
-      throw new Error("Downloads above 128 MiB need a Chromium browser with Save File Picker support.");
+      try {
+        const handle = await showSaveFilePicker({suggestedName: selected.name});
+        writable = await handle.createWritable();
+      } catch (error) {
+        if (!["SecurityError", "NotAllowedError", "NotSupportedError"].includes(error.name)) throw error;
+      }
     }
+    if (!writable && session.features.browserDownloads) {
+      const grant = await requestJSON(session.base, "files/browser-download", fileOptions(session, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: selected.id}),
+      }));
+      if (active !== session || session.fileAbort.signal.aborted) return;
+      const target = new URL(grant.path, session.base);
+      if (target.origin !== session.base.origin || !target.pathname.startsWith(session.base.pathname + "files/browser-download/"))
+        throw new Error("Wolfie returned an invalid download link.");
+      const link = document.createElement("a");
+      link.href = target; link.target = "remmie-download"; link.referrerPolicy = "no-referrer";
+      document.body.append(link); link.click(); link.remove();
+      fileStatus.textContent = `Sent ${selected.name} to browser downloads. Check progress or cancel in your browser’s download manager.`;
+      return;
+    }
+    if (!writable && selected.size > 128 * 1024**2)
+      throw new Error("This older host needs the browser-download update for files above 128 MiB when Save File Picker is unavailable.");
     fileStatus.textContent = `Downloading ${selected.name}…`;
     const response = await fetch(new URL(`files/download/${selected.id}`, session.base), {
       cache: "no-store", credentials: "omit", redirect: "error", ...fileOptions(session),
