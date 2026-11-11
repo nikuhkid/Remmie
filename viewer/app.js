@@ -3,6 +3,7 @@ const serverField = document.querySelector("#server");
 const serverLabel = document.querySelector("#server-label");
 const passwordField = document.querySelector("#password");
 const connectButton = document.querySelector("#connect");
+const cancelButton = document.querySelector("#connection-cancel");
 const disconnectButton = document.querySelector("#disconnect");
 const video = document.querySelector("#desktop");
 const status = document.querySelector("#status");
@@ -63,7 +64,7 @@ function reconnect(intent, reason) {
   disconnectButton.disabled = false;
   serverField.disabled = passwordField.disabled = true;
   if (navigator.onLine === false) {
-    show("Network offline. Remmie will reconnect when it returns.", "connecting");
+    show("Network offline. Reconnecting when it returns.", "connecting");
     return;
   }
   const delay = Math.min(15000, 1000 * 2 ** Math.min(intent.attempt++, 4));
@@ -74,8 +75,11 @@ function reconnect(intent, reason) {
 }
 
 function show(message, state = "idle") {
-  status.textContent = message;
+  status.textContent = document.body.classList.contains("connected") ? message : String(message)
+    .replace(/\bRemmie password\b/gi, "password")
+    .replace(/\b(?:remote\s+)?desktop(?:\s+video)?\b/gi, "session");
   status.dataset.state = state;
+  cancelButton.hidden = !active && !desired;
 }
 
 function connecting(session, message, timeoutMessage) {
@@ -161,7 +165,7 @@ function completeControl(session) {
 
 function signalingBase(value) {
   const address = typeof value === "string" ? value.trim() : "";
-  if (!address) throw new Error("Enter your Remmie server address.");
+  if (!address) throw new Error("Enter your server address.");
   if (address.length > 2048 || /[\s\\]/.test(address)) throw new Error("Enter a valid server hostname or HTTPS URL.");
   let url;
   try { url = new URL(address.includes("://") ? address : `https://${address}`); }
@@ -173,7 +177,7 @@ function signalingBase(value) {
   }
   if (url.pathname === "/") url.pathname = "/api/";
   else if (!/^\/api(?:\/[a-f0-9]{32})?\/?$/.test(url.pathname))
-    throw new Error("Use the server address or its Remmie /api/ endpoint.");
+    throw new Error("Use the server address or its /api/ endpoint.");
   if (!url.pathname.endsWith("/")) url.pathname += "/";
   return url;
 }
@@ -199,7 +203,10 @@ async function requestJSON(base, path, options) {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload) {
-    const error = new Error(payload?.error || `Signaling returned HTTP ${response.status}.`);
+    const detail = !document.body.classList.contains("connected") && response.status === 409
+      ? "The server is busy. Please try again."
+      : payload?.error || `Signaling returned HTTP ${response.status}.`;
+    const error = new Error(detail);
     error.status = response.status;
     throw error;
   }
@@ -227,6 +234,11 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   if (measurement?.session === session) endMeasurement("Connection ended; partial measurement.");
   active = null;
   document.body.classList.remove("connected");
+  document.title = "Connect";
+  sessionMenu.hidden = true;
+  menuToggle.hidden = true;
+  menuToggle.disabled = true;
+  menuToggle.setAttribute("aria-expanded", "false");
   stopCapture(session);
   const sent = tellHost && send(session, { type: "disconnect" });
   session.abort.abort();
@@ -490,8 +502,8 @@ async function connect(password, intent = null) {
     const signal = session.abort.signal;
     const config = await requestJSON(base, "ice", { signal });
     if (active !== session) return;
-    connecting(session, "Gathering WebRTC network addresses…",
-      "The browser timed out gathering WebRTC network addresses.");
+    connecting(session, "Preparing connection…",
+      "The browser timed out preparing the connection.");
     const peer = new RTCPeerConnection({ iceServers: config.iceServers });
     session.peer = peer;
     const transceiver = peer.addTransceiver("video", { direction: "recvonly" });
@@ -522,8 +534,8 @@ async function connect(password, intent = null) {
       if (active !== session) return;
       if (peer.connectionState === "failed") {
         const message = peer.iceConnectionState === "failed"
-          ? "WebRTC could not find a working network path to the server."
-          : "The WebRTC transport failed.";
+          ? "Could not find a working network path to the server."
+          : "The connection failed.";
         finish(session, message, "error", false, true);
       } else if (peer.connectionState === "disconnected") {
         stopCapture(session);
@@ -600,8 +612,8 @@ async function connect(password, intent = null) {
         help.textContent = session.canInput
           ? "Click the desktop to send input. Ctrl+Alt+Esc releases keyboard and mouse capture."
           : "Local preview. Open the remote viewer on another device for control.";
-        connecting(session, "Waiting for the remote desktop…",
-          "Password accepted, but desktop video did not start.");
+        connecting(session, "Waiting for the session…",
+          "Password accepted, but the session did not start.");
         session.pingTimer = setInterval(() => heartbeat(session), 5000);
         heartbeat(session);
         session.statsTimer = setInterval(() => showRoute(session), 2000);
@@ -670,7 +682,7 @@ async function connect(password, intent = null) {
     await peer.setLocalDescription(await peer.createOffer());
     await waitForIce(peer, signal);
     if (active !== session) return;
-    connecting(session, "Waiting for the server’s WebRTC answer…", "The server’s WebRTC answer timed out.");
+    connecting(session, "Waiting for the server’s response…", "The server’s response timed out.");
     const answer = await requestJSON(base, "offer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -678,8 +690,8 @@ async function connect(password, intent = null) {
       signal,
     });
     if (active === session) {
-      connecting(session, "Checking WebRTC network paths…",
-        "The server answered, but WebRTC timed out checking network paths.");
+      connecting(session, "Checking connection…",
+        "The server answered, but the connection timed out.");
       await peer.setRemoteDescription(answer);
     }
   } catch (error) {
@@ -689,13 +701,17 @@ async function connect(password, intent = null) {
 }
 
 function showDesktop(session) {
-  if (active !== session || !session.authorized || session.peer.connectionState !== "connected") return;
+  if (active !== session || !session.authorized || session.peer.connectionState !== "connected" ||
+      video.readyState < 2 || !video.videoWidth) return;
   clearTimeout(session.connectTimer);
   clearTimeout(session.disconnectTimer);
   session.disconnectTimer = null;
   session.intent.attempt = 0;
   empty.hidden = true;
   document.body.classList.add("connected");
+  document.title = "Remmie";
+  menuToggle.hidden = false;
+  menuToggle.disabled = false;
   desktopControls(session);
   show(session.canInput ? "Connected to the remote desktop." : "Previewing the remote desktop.", "connected");
 }
@@ -717,7 +733,7 @@ form.addEventListener("submit", event => {
   allowClipboard();
   connect(value);
 });
-disconnectButton.addEventListener("click", () => {
+function disconnectSession() {
   if (active) finish(active, "Disconnected.", "idle", true);
   else {
     forgetConnection();
@@ -726,7 +742,9 @@ disconnectButton.addEventListener("click", () => {
     serverField.disabled = passwordField.disabled = false;
     show("Disconnected.");
   }
-});
+}
+disconnectButton.addEventListener("click", disconnectSession);
+cancelButton.addEventListener("click", disconnectSession);
 window.addEventListener("pagehide", () => {
   if (active) finish(active, "Disconnected.", "idle", true);
   else forgetConnection();
@@ -967,9 +985,10 @@ document.querySelector("#clipboard-copy").addEventListener("click", async () => 
 });
 
 function setMenu(open) {
+  if (menuToggle.hidden || menuToggle.disabled || !active?.authorized) open = false;
   sessionMenu.hidden = !open;
   menuToggle.setAttribute("aria-expanded", String(open));
-  if (!open) menuToggle.focus({preventScroll: true});
+  if (!open && !menuToggle.hidden) menuToggle.focus({preventScroll: true});
 }
 menuToggle.addEventListener("click", () => setMenu(sessionMenu.hidden));
 document.querySelector("#menu-close").addEventListener("click", () => setMenu(false));

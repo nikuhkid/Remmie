@@ -17,7 +17,8 @@ body.connected #connection-card { display: none; }
 #status { position: absolute; z-index: 3; top: 4px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 200px); background: #202123eb; border-radius: 3px; padding: 7px 12px; margin: 6px 0; font-size: 13px; text-align: center; pointer-events: none; }
 body.connected #status[data-state="connected"] { opacity: 0; }
 #status[data-state="error"] { color: #ffb1ad; }
-#session-toggle { position: absolute; top: 12px; left: 12px; z-index: 6; font-weight: 600; background: #25282d; border-color: #656970; }
+#session-toggle { position: absolute; top: 12px; left: 12px; z-index: 6; font-weight: 600; background: #25282d; border-color: #656970; opacity: .28; transition: opacity .18s ease; }
+#session-toggle:hover, #session-toggle:focus-visible, #session-toggle[aria-expanded="true"] { opacity: 1; }
 #session-toggle[aria-expanded="true"] { background: #3a4858; }
 #session-menu { position: absolute; z-index: 7; left: 12px; top: 55px; width: 330px; max-width: calc(100% - 24px); max-height: calc(100dvh - 67px); overflow: auto; padding: 14px 12px; background: #202123; border: 1px solid #4b4c50; border-radius: 4px; box-shadow: 0 8px 32px #0009; }
 .menu-heading { display: flex; align-items: center; justify-content: space-between; margin: 0 0 6px; } .menu-heading strong { font-size: 17px; } #menu-close { padding: 4px 8px; font-size: 12px; }
@@ -40,3 +41,4 @@ body.native-size video { width: auto; height: auto; max-width: none; object-fit:
 body.crisp video { image-rendering: pixelated; }
 [hidden] { display: none !important; }
 @media (max-width: 480px) { #status { top: auto; bottom: 8px; max-width: calc(100% - 24px); width: max-content; } #session-menu { width: 320px; } }
+@media (prefers-reduced-motion: reduce) { #session-toggle { transition: none; } }

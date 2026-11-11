@@ -2,31 +2,30 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="referrer" content="no-referrer"><title>Remmie</title>
-  <link rel="stylesheet" href="./style.css?v=server-selection-1">
-  <script type="module" src="./app.js?v=server-selection-1"></script>
+  <meta name="referrer" content="no-referrer"><title>Connect</title>
+  <link rel="stylesheet" href="./style.css?v=quiet-entry-1">
+  <script type="module" src="./app.js?v=quiet-entry-1"></script>
 </head>
 <body>
   <header id="connection-card">
-    <h1>Remmie <span>Remote desktop</span></h1>
     <form id="connect-form">
       <label for="server">Server</label>
-      <input id="server" type="text" required maxlength="2048" autocomplete="url" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="desktop.example.net" aria-describedby="server-help">
-      <p id="server-help" class="help">Enter the hostname or HTTPS URL of a compatible Remmie host.</p>
-      <label for="password">Remmie password</label>
+      <input id="server" type="text" required maxlength="2048" autocomplete="url" inputmode="url" autocapitalize="none" spellcheck="false">
+      <label for="password">Password</label>
       <input id="password" type="password" required maxlength="256" autocomplete="current-password">
       <button id="connect" type="submit">Connect</button>
+      <button id="connection-cancel" type="button" hidden>Cancel</button>
     </form>
   </header>
   <main id="workspace">
     <div class="screen">
-      <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Remote desktop"></video>
+      <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Session display"></video>
       <audio id="desktop-audio" autoplay hidden></audio>
       <iframe name="remmie-download" id="download-frame" title="Browser download" hidden></iframe>
-      <p id="empty">The remote desktop will appear here.</p>
+      <p id="empty"></p>
     </div>
     <p id="status" role="status">Ready to connect.</p>
-    <button id="session-toggle" type="button" aria-expanded="false" aria-controls="session-menu">Remmie</button>
+    <button id="session-toggle" type="button" aria-expanded="false" aria-controls="session-menu" hidden disabled>Remmie</button>
     <aside id="session-menu" aria-label="Session menu" hidden>
       <div class="menu-heading"><strong id="server-label">Remote desktop</strong><button id="menu-close" type="button" aria-label="Close session menu">Close</button></div>
       <p id="route" class="help">Private desktop</p>
