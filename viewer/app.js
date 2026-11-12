@@ -98,18 +98,19 @@ function desktopControls(session) {
   const connected = session?.authorized && video.readyState >= 2 &&
     session.peer.connectionState === "connected";
   const features = session?.features || {};
+  const inputAvailable=connected && !(session?.handoverFrom || session)?.displayUnavailable;
   const filesBusy = !!(session?.fileBusy || session?.fileCancelling || session?.handoverFrom);
   profileSelect.disabled = !connected || !features.profiles || !!session.pendingControl || !!session.handoverFrom;
   document.querySelector("#input-probe").disabled = !connected || !features.inputProbe || !!session.handoverFrom || !!session.pendingControl || !!session.probing;
   fullscreenButton.disabled = !connected || !workspace.requestFullscreen;
   releaseButton.disabled = !connected;
-  relativeButton.disabled = !connected || !features.relativeMouse || !video.requestPointerLock;
-  shortcutSelect.disabled = shortcutButton.disabled = !connected || !features.shortcuts;
+  relativeButton.disabled = !inputAvailable || !features.relativeMouse || !video.requestPointerLock;
+  shortcutSelect.disabled = shortcutButton.disabled = !inputAvailable || !features.shortcuts;
   clipboardToggle.disabled = !connected || !features.clipboard;
   clipboardSend.disabled = clipboardGet.disabled = !connected || !features.clipboard || !!session.pendingControl;
   monitorSelect.disabled = !connected || !session.displays?.length || !!session.pendingControl;
   performanceStart.disabled = !connected || !!measurement;
-  codecSelect.disabled = !connected || !session?.codecs?.length || !!session.handoverFrom || filesBusy || !!session.probing;
+  codecSelect.disabled = !connected || !session?.codecs?.length || !!session.handoverFrom || filesBusy || !!session.probing || !!session.displayUnavailable;
   resolutionSelect.disabled = !connected || !features.resolutions || !!session.pendingControl;
   audioToggle.disabled = audioVolume.disabled = !session?.authorized || !features.audio;
   fpsSelect.disabled = !connected || !features.videoSettings || !!session.pendingControl;
@@ -296,6 +297,8 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
     session.peer?.close();
   }
   video.srcObject = null;
+  video.classList.remove("display-recovering");
+  empty.textContent="";
   audio.pause();
   audio.srcObject = null;
   audioStatus.textContent = "Connect to hear remote audio.";
@@ -784,6 +787,23 @@ async function connect(password, intent = null, previous = null) {
         completeControl(session);
         monitorSelect.value = session.selectedMonitor || "";
         controlStatus.textContent = message.message;
+      } else if (message?.type === "capture-state" && session.authorized) {
+        session.displayUnavailable=message.state==="unavailable";
+        if (!session.handoverFrom) {
+          if(session.displayUnavailable) {
+            releaseInput(session);
+            video.classList.add("display-recovering");
+            empty.textContent="Waiting for the host display…";empty.hidden=false;
+            show("The display is temporarily unavailable. Keeping the connection open.","connecting");
+          } else {
+            video.classList.remove("display-recovering");empty.textContent="";
+            showDesktop(session);
+          }
+        }
+        desktopControls(session);
+      } else if (session.authorized && (message?.type==="capture-retry" ||
+                 (message?.type==="error" && message.message==="Desktop capture failed. Check that the display is available."))) {
+        finish(session,"The display is temporarily unavailable.","connecting",true,true);
       } else if (message?.type === "codec-error" && session.authorized) {
         selectedCodec = "auto";
         selectedFPS = Math.min(selectedFPS || 20, 30);
@@ -816,6 +836,7 @@ async function connect(password, intent = null, previous = null) {
 }
 
 function showDesktop(session) {
+  if(session.displayUnavailable)return;
   if (session.handoverFrom) {
     if (session.authorized && session.stagedVideo?.readyState >= 2 && session.stagedVideo.videoWidth && !session.commitSent) {
       session.commitSent = true;
@@ -830,6 +851,8 @@ function showDesktop(session) {
   session.disconnectTimer = null;
   session.intent.attempt = 0;
   empty.hidden = true;
+  empty.textContent="";
+  video.classList.remove("display-recovering");
   document.body.classList.add("connected");
   document.title = "Remmie";
   menuToggle.hidden = false;
@@ -891,7 +914,7 @@ window.addEventListener("offline", () => {
 
 function inputSession() {
   const session = active?.handoverFrom || active;
-  return session?.canInput && !session.monitorChanging && session.peer.connectionState === "connected" && video.videoWidth
+  return session?.canInput && !session.monitorChanging && !session.displayUnavailable && session.peer.connectionState === "connected" && video.videoWidth
     ? session : null;
 }
 
