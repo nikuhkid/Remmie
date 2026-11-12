@@ -24,6 +24,7 @@ const clipboardSend = document.querySelector("#clipboard-send");
 const clipboardGet = document.querySelector("#clipboard-get");
 const controlStatus = document.querySelector("#control-status");
 const channelLabel = "remmie-control-v1";
+const codecHandoverTimeout = 60000;
 const performanceStart = document.querySelector("#performance-start");
 const performanceCopy = document.querySelector("#performance-copy");
 const performanceSave = document.querySelector("#performance-save");
@@ -90,7 +91,7 @@ function connecting(session, message, timeoutMessage) {
   session.timeoutMessage = timeoutMessage;
   session.connectTimer = setTimeout(
     () => finish(session, session.timeoutMessage, "error", true, true), session.handoverFrom ? Math.max(1,session.handoverDeadline-performance.now()) : 45000);
-  show(session.handoverFrom ? "Preparing the new codec; the previous stream remains active…" : message,
+  show(session.handoverFrom ? `Preparing the new codec. ${message} The previous stream remains active.` : message,
     session.handoverFrom ? "connected" : "connecting");
 }
 
@@ -537,7 +538,7 @@ async function connect(password, intent = null, previous = null) {
     buttons: new Set(),
     motionFrame: 0,
     handoverFrom: previous,
-    handoverDeadline: previous ? performance.now()+20000 : null,
+    handoverDeadline: previous ? performance.now()+codecHandoverTimeout : null,
   };
   const video = previous ? document.createElement("video") : document.querySelector("#desktop");
   const audio = previous ? document.createElement("audio") : document.querySelector("#desktop-audio");
@@ -815,6 +816,7 @@ async function connect(password, intent = null, previous = null) {
       }
     });
     await peer.setLocalDescription(await peer.createOffer());
+    connecting(session, "Gathering network candidates…", "The browser timed out gathering network candidates.");
     await waitForIce(peer, signal);
     if (active !== session) return;
     connecting(session, "Waiting for the server’s response…", "The server’s response timed out.");
