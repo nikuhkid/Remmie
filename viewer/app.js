@@ -49,6 +49,9 @@ const fileStatus = document.querySelector("#file-status");
 let clipboardAllowed = false;
 let selectedCodec = "auto";
 let selectedFPS = null;
+let selectedProfile = null;
+let receiverOverride = false;
+let smoothingOverride = false;
 let active = null;
 let desired = null;
 let measurement = null;
@@ -102,6 +105,7 @@ function desktopControls(session) {
   const inputAvailable=connected && !(session?.handoverFrom || session)?.displayUnavailable;
   const filesBusy = !!(session?.fileBusy || session?.fileCancelling || session?.handoverFrom);
   profileSelect.disabled = !connected || !features.profiles || !!session.pendingControl || !!session.handoverFrom;
+  document.querySelector("#mode-reset").disabled = !connected || !features.profileDefaults || !!session.pendingControl || filesBusy || !!session.probing;
   document.querySelector("#input-probe").disabled = !connected || !features.inputProbe || !!session.handoverFrom || !!session.pendingControl || !!session.probing;
   fullscreenButton.disabled = !connected || !workspace.requestFullscreen;
   releaseButton.disabled = !connected;
@@ -290,8 +294,18 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
     disposeSession(session);
     session.handoverFrom = null;
     active = previous;
-    selectedCodec = previous.videoCodec || "auto";
+    selectedCodec = previous.requestedCodec || "auto";
+    selectedFPS = previous.requestedFPS ?? null;
+    selectedProfile = previous.profile;
+    receiverOverride = previous.receiverOverride || false;
+    receiverBuffer.value = previous.receiverChoice || "auto";
+    smoothingOverride = previous.smoothingOverride || false;
+    document.querySelector("#smooth-scale").checked = previous.smoothingChecked ?? true;
+    document.body.classList.toggle("crisp", !document.querySelector("#smooth-scale").checked);
     codecSelect.value = selectedCodec;
+    profileSelect.value = previous.profile || "general";
+    fpsSelect.value = String(previous.effectiveFPS || 20);
+    if (previous.readyMessage) applyModeDetails(previous, previous.readyMessage);
     if (previous.peer.connectionState === "connected" && recover) {
       showDesktop(previous);
       document.querySelector("#codec-status").textContent = `Kept ${previous.videoCodec}: ${message}`;
@@ -599,6 +613,10 @@ async function connect(password, intent = null, previous = null) {
     motionFrame: 0,
     handoverFrom: previous,
     handoverDeadline: previous ? performance.now()+codecHandoverTimeout : null,
+    requestedCodec: selectedCodec,
+    requestedFPS: selectedFPS,
+    receiverOverride, receiverChoice:receiverBuffer.value,
+    smoothingOverride, smoothingChecked:document.querySelector("#smooth-scale").checked,
   };
   const video = previous ? document.createElement("video") : document.querySelector("#desktop");
   const audio = previous ? document.createElement("audio") : document.querySelector("#desktop-audio");
@@ -615,6 +633,7 @@ async function connect(password, intent = null, previous = null) {
     });
   }
   active = session;
+  desktopControls(session);
   connectButton.disabled = true;
   disconnectButton.disabled = false;
   serverField.disabled = passwordField.disabled = true;
@@ -638,6 +657,7 @@ async function connect(password, intent = null, previous = null) {
     codecSelect.replaceChildren(new Option("Automatic", "auto"), ...session.codecs.map(name =>
       new Option(config.videoEncoders?.[name] ? `${name} · ${config.videoEncoders[name]}` : name, name)));
     if (!session.codecs.includes(selectedCodec)) selectedCodec = "auto";
+    session.requestedCodec = selectedCodec;
     codecSelect.value = selectedCodec;
     document.querySelector("#codec-status").textContent = session.codecs.length
       ? "Available on both devices. A new codec is prepared before swapping streams."
@@ -711,7 +731,12 @@ async function connect(password, intent = null, previous = null) {
         session.authorized = true;
         session.handoverToken = message.handoverToken;
         session.videoCodec = message.videoCodec;
+        session.profile = message.profile || "general";
+        session.effectiveFPS = message.fps;
+        session.readyMessage = message;
+        selectedProfile = session.profile;
         profileSelect.value = message.profile || "general";
+        applyModeDetails(session, message);
         session.canInput = message.input === true;
         session.permissions=message.permissions || {};
         session.features = message.features || {};
@@ -811,11 +836,14 @@ async function connect(password, intent = null, previous = null) {
         completeControl(session);
       } else if (message?.type === "video-settings" && session.authorized) {
         if (message.profile) profileSelect.value=message.profile;
-        if (Number.isFinite(message.bufferMs)) { receiverBuffer.value=String(message.bufferMs); tuneReceivers(); }
-        selectedFPS = message.fps;
+        if (!receiverOverride && Number.isFinite(message.bufferMs)) { receiverBuffer.value=String(message.bufferMs); tuneReceivers(); }
+        session.effectiveFPS = message.fps;
         fpsSelect.value = String(message.fps);
+        if (session.readyMessage) {
+          session.readyMessage={...session.readyMessage,fps:message.fps};
+          applyModeDetails(session,session.readyMessage);
+        }
         if (message.resolution) {
-          selectedResolution = message.resolution;
           resolutionSelect.value = message.resolution;
         }
         document.querySelector("#video-status").textContent = `Host limit applied: ${message.fps} FPS. Actual delivery is shown in Performance measurements.`;
@@ -886,7 +914,9 @@ async function connect(password, intent = null, previous = null) {
     const answer = await requestJSON(base, "offer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({...peer.localDescription.toJSON(), ...(previous ? {handover:previous.handoverToken} : {})}),
+      body: JSON.stringify({...peer.localDescription.toJSON(), ...(previous ? {handover:previous.handoverToken} : {}),
+        ...(selectedProfile ? {profile:selectedProfile} : {}), codec:selectedCodec,
+        ...(selectedFPS ? {fps:selectedFPS} : {}), ...(selectedResolution ? {resolution:selectedResolution} : {})}),
       signal,
     });
     if (active === session) {
@@ -1211,10 +1241,16 @@ document.querySelector("#scale-fit").addEventListener("change", event => {
   document.body.classList.toggle("native-size", !event.target.checked);
 });
 document.querySelector("#smooth-scale").addEventListener("change", event => {
+  smoothingOverride = true;
+  if(active) {active.smoothingOverride=true;active.smoothingChecked=event.target.checked;}
   document.body.classList.toggle("crisp", !event.target.checked);
 });
 fpsSelect.addEventListener("change", () => {
-  if (active?.features?.videoSettings) requestControl(active, {type: "video-settings", fps: Number(fpsSelect.value)});
+  if (active?.features?.videoSettings) {
+    selectedFPS = Number(fpsSelect.value);
+    active.requestedFPS = selectedFPS;
+    requestControl(active, {type: "video-settings", fps:selectedFPS});
+  }
 });
 codecSelect.addEventListener("change", () => {
   const session = active;
@@ -1246,8 +1282,46 @@ function tuneReceiver(receiver) {
   } catch { document.querySelector("#receiver-status").textContent="The browser rejected that target; its normal buffering policy remains active."; }
 }
 function tuneReceivers() { for (const receiver of active?.peer?.getReceivers() || []) tuneReceiver(receiver); }
-receiverBuffer.addEventListener("change",tuneReceivers);
-profileSelect.addEventListener("change",()=>{ if(active?.authorized) requestControl(active,{type:"video-settings",profile:profileSelect.value}); });
+receiverBuffer.addEventListener("change",()=>{
+  receiverOverride=true;
+  if(active) {active.receiverOverride=true;active.receiverChoice=receiverBuffer.value;}
+  tuneReceivers();
+  if(active?.readyMessage)applyModeDetails(active,active.readyMessage);
+});
+profileSelect.addEventListener("change",()=>{
+  const session=active;
+  if (!session?.authorized || session.handoverFrom || session.fileBusy || session.probing) return;
+  selectedProfile=profileSelect.value;
+  if (session.features.profileDefaults && session.handoverToken) connect(desired.password,desired,session);
+  else requestControl(session,{type:"video-settings",profile:selectedProfile});
+});
+document.querySelector("#mode-reset").addEventListener("click",()=>{
+  if (!active?.authorized || active.handoverFrom || active.fileBusy || active.probing) return;
+  selectedCodec="auto";selectedFPS=null;receiverOverride=false;smoothingOverride=false;
+  connect(desired.password,desired,active);
+});
+
+function applyModeDetails(session, message) {
+  const policy=message.profileSettings;
+  if (!policy) return;
+  if (!receiverOverride && Number.isFinite(policy.bufferMs)) {
+    receiverBuffer.value=String(policy.bufferMs);
+    for (const receiver of session.peer.getReceivers()) tuneReceiver(receiver);
+  }
+  if (!smoothingOverride) {
+    document.querySelector("#smooth-scale").checked=session.profile!=="office";
+    document.body.classList.toggle("crisp",session.profile==="office");
+  }
+  const overrides=[selectedCodec!=="auto" ? "codec" : null,selectedFPS ? "FPS" : null,
+    receiverOverride ? "buffer" : null,smoothingOverride ? "scaling" : null].filter(Boolean);
+  document.querySelector("#profile-status").textContent=
+    `${session.profile[0].toUpperCase()+session.profile.slice(1)}: ${message.videoCodec}, ${message.fps} FPS ceiling, files up to ${policy.fileTransferMbps ?? "host policy"} Mbps. ${message.codecReason || ""}.`+
+    (overrides.length ? ` Manual overrides: ${overrides.join(", ")}.` : "")+
+    (session.profile==="office" ? " Office favours text with 15 FPS and sharp scaling; the stream still uses 4:2:0 colour." : "");
+  const sound=message.audioSettings;
+  document.querySelector("#audio-format").textContent=sound
+    ? `${sound.codec} · ${sound.sample_rate/1000} kHz stereo · ${sound.bitrate_kbps} kbps · ${sound.packet_ms} ms · ${sound.application}` : "Playback audio is unavailable.";
+}
 
 let inputProbeResult=null;
 document.querySelector("#input-probe").addEventListener("click",()=>{
@@ -1416,7 +1490,10 @@ audioToggle.addEventListener("click", () => {
 });
 audioVolume.addEventListener("input", () => { if (active) playAudio(active); });
 resolutionSelect.addEventListener("change", () => {
-  if (active?.features?.resolutions) requestControl(active, {type: "video-settings", resolution: resolutionSelect.value});
+  if (active?.features?.resolutions) {
+    selectedResolution=resolutionSelect.value;
+    requestControl(active, {type: "video-settings", resolution:selectedResolution});
+  }
 });
 
 function fileSize(bytes) {

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer"><title>Connect</title>
-  <link rel="stylesheet" href="./style.css?v=codec-pipeline-1">
-  <script type="module" src="./app.js?v=codec-pipeline-1"></script>
+  <link rel="stylesheet" href="./style.css?v=mode-defaults-1">
+  <script type="module" src="./app.js?v=mode-defaults-1"></script>
 </head>
 <body>
   <header id="connection-card">
@@ -41,8 +41,9 @@
       </div></details>
       <details><summary>Video</summary><div class="section-body">
         <label for="stream-profile">Profile</label>
-        <select id="stream-profile" disabled><option value="general">General</option><option value="gaming">Gaming</option><option value="media">Media</option></select>
-        <p class="help">Uses host limits. Gaming favours short queues; Media allows more buffering. Resolution stays under your control.</p>
+        <select id="stream-profile" disabled><option value="general">General</option><option value="gaming">Gaming</option><option value="media">Media</option><option value="office">Office</option></select>
+        <p id="profile-status" class="help">Modes set codec, sound, FPS, buffering and file budgets within host limits. Manual choices stay in effect; resolution stays under your control.</p>
+        <button id="mode-reset" type="button" disabled>Use mode defaults</button>
         <label for="video-codec">Video codec</label>
         <select id="video-codec" disabled><option value="auto">Automatic</option></select>
         <p id="codec-status" class="help">Host support is checked when connecting.</p>
@@ -63,6 +64,7 @@
         <button id="audio-toggle" type="button" disabled>Enable sound</button>
         <label for="audio-volume">Volume</label><input id="audio-volume" type="range" min="0" max="100" value="100" disabled>
         <p id="audio-status" role="status" class="help">Connect to hear remote audio. Microphone sharing is off.</p>
+        <p id="audio-format" class="help"></p>
       </div></details>
       <details><summary>Input controls</summary><div class="section-body">
         <button id="relative" type="button" aria-pressed="false" disabled>Relative mouse</button>
