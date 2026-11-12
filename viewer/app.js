@@ -201,6 +201,36 @@ function videoCodecSupported(codec, name) {
   return true;
 }
 
+async function av1ReceiveLevel(capabilities = globalThis.navigator?.mediaCapabilities) {
+  if (!capabilities?.decodingInfo) return 5;
+  const query = async () => {
+    for (const [fps, bitrate, level] of [[60, 12000000, 9], [30, 8000000, 8]]) {
+      try {
+        const result = await capabilities.decodingInfo({type:"webrtc", video:{
+          contentType:"video/AV1", width:1920, height:1080, bitrate, framerate:fps}});
+        if (result.supported && result.smooth) return level;
+      } catch { return 5; }
+    }
+    return 5;
+  };
+  let timer;
+  try { return await Promise.race([query(), new Promise(resolve => {timer=setTimeout(() => resolve(5),1500);})]); }
+  finally { clearTimeout(timer); }
+}
+
+function av1OfferLevel(offer, level) {
+  if (level <= 5) return offer;
+  const payloads = new Set([...offer.sdp.matchAll(/^a=rtpmap:(\d+) AV1\/90000\r?$/gmi)].map(m => m[1]));
+  const sdp = offer.sdp.replace(/^a=fmtp:(\d+) ([^\r\n]+)(\r?)$/gm, (line, payload, parameters, cr) => {
+    if (!payloads.has(payload)) return line;
+    const params = new URLSearchParams(parameters.replace(/\s*;\s*/g,"&"));
+    if (Number(params.get("profile") || 0) !== 0) return line;
+    params.set("level-idx",String(level));
+    return `a=fmtp:${payload} ${[...params].map(([key,value]) => `${key}=${value}`).join(";")}${cr}`;
+  });
+  return {type:offer.type,sdp};
+}
+
 async function requestJSON(base, path, options) {
   const response = await fetch(new URL(path, base), {
     cache: "no-store",
@@ -698,13 +728,13 @@ async function connect(password, intent = null, previous = null) {
         if (selectedResolution && session.resolutions.includes(selectedResolution) && selectedResolution !== message.resolution)
           session.restoreResolution = selectedResolution;
         document.querySelector("#resolution-status").textContent = session.features.resolutions
-          ? `Fits within the selected size; no stretching or upscaling. Windows display mode stays the same.${message.videoCodec === "AV1" ? " This AV1 session is limited to 1280×720." : ""}`
+          ? `Fits within the selected size; no stretching or upscaling. Windows display mode stays the same.${message.videoLimits ? ` AV1 receiver limit: ${message.videoLimits.width}×${message.videoLimits.height}/${message.videoLimits.fps} FPS.` : ""}`
           : "This host needs the resolution update.";
         session.fileToken = session.features.files ? message.fileToken : null;
         session.maxFPS = message.maxFPS || 60;
         for (const option of fpsSelect.options) option.disabled = Number(option.value) > session.maxFPS;
         if (message.videoCodec) document.querySelector("#codec-status").textContent =
-          `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoCodec === "AV1" ? " · up to 720p/30 FPS for the negotiated AV1 level" : ""}. ` +
+          `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoLimits ? ` · up to ${message.videoLimits.width}×${message.videoLimits.height}/${message.videoLimits.fps} FPS` : ""}. ` +
           (session.handoverToken ? "Codec changes keep this stream until its replacement is ready." : "This host reconnects when its codec changes.");
         fileStatus.textContent = session.features.files ? "Ready. Maximum file size: 16 GiB." : "Restart the updated host to enable file transfer.";
         if (session.features.videoSettings) {
@@ -845,7 +875,10 @@ async function connect(password, intent = null, previous = null) {
         show(message.message, "error");
       }
     });
-    await peer.setLocalDescription(await peer.createOffer());
+    const offer = await peer.createOffer();
+    const av1Level = browserCodecs.some(c => videoCodecSupported(c,"AV1")) ? await av1ReceiveLevel() : 5;
+    if (active !== session) return;
+    await peer.setLocalDescription(av1OfferLevel(offer,av1Level));
     connecting(session, "Gathering network candidates…", "The browser timed out gathering network candidates.");
     await waitForIce(peer, signal);
     if (active !== session) return;
