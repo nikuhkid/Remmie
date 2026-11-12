@@ -381,6 +381,20 @@ async function showRoute(session) {
   }
 }
 
+function audioPerformanceInterval(report, previous) {
+  const inbound=[...report.values()].find(stat=>stat.type==="inbound-rtp" && (stat.kind==="audio" || stat.mediaType==="audio"));
+  if(!inbound)return {baseline:null,sample:null};
+  const baseline={id:inbound.id};
+  for(const key of ["timestamp","bytesReceived","packetsReceived","packetsLost","totalSamplesReceived","concealedSamples","concealmentEvents","jitterBufferDelay","jitterBufferEmittedCount"])
+    baseline[key]=Number.isFinite(inbound[key])?inbound[key]:null;
+  const seconds=previous?.id===baseline.id?(baseline.timestamp-previous.timestamp)/1000:0;
+  if(!(seconds>0) || baseline.bytesReceived<previous.bytesReceived)return {baseline,sample:null};
+  const delta=key=>baseline[key]!==null && previous[key]!==null?Math.max(0,baseline[key]-previous[key]):null;
+  return {baseline,sample:{seconds,payloadBytes:delta("bytesReceived"),receivedPackets:delta("packetsReceived"),lostPackets:delta("packetsLost"),
+    receivedSamples:delta("totalSamplesReceived"),concealedSamples:delta("concealedSamples"),concealmentEvents:delta("concealmentEvents"),
+    bufferSeconds:delta("jitterBufferDelay"),bufferSamples:delta("jitterBufferEmittedCount")}};
+}
+
 function performanceInterval(report, previous) {
   const inbound = [...report.values()].find(stat => stat.type === "inbound-rtp" &&
     (stat.kind === "video" || stat.mediaType === "video"));
@@ -389,6 +403,8 @@ function performanceInterval(report, previous) {
     "packetsLost", "totalDecodeTime", "jitterBufferDelay", "jitterBufferEmittedCount", "freezeCount"];
   const baseline = { id: inbound.id };
   for (const key of fields) baseline[key] = Number.isFinite(inbound[key]) ? inbound[key] : null;
+  const audioInterval=audioPerformanceInterval(report,previous?.audio);
+  baseline.audio=audioInterval.baseline;
   const seconds = previous?.id === baseline.id ? (baseline.timestamp - previous.timestamp) / 1000 : 0;
   if (previous?.id === baseline.id && !(seconds > 0)) return { baseline: previous, sample: null };
   if (!(seconds > 0) || baseline.framesDecoded < previous.framesDecoded ||
@@ -403,6 +419,7 @@ function performanceInterval(report, previous) {
   const types = [report.get(pair?.localCandidateId)?.candidateType, report.get(pair?.remoteCandidateId)?.candidateType];
   const sample = {
     hostTimings: active?.hostTimings || null,
+    audio:audioInterval.sample,
     decoder: inbound.decoderImplementation || null,
     powerEfficientDecoder: inbound.powerEfficientDecoder ?? null,
     seconds, decodedFrames: decoded, payloadBytes: delta("bytesReceived"),
@@ -429,6 +446,9 @@ function summarizePerformance(samples) {
     ? scale * numerator / denominator : null;
   const rtt = samples.map(sample => sample.networkRTTMs).filter(Number.isFinite).sort((a, b) => a - b);
   const packets = total("receivedPackets"), lost = total("lostPackets"), seconds = total("seconds");
+  const audioSamples=samples.map(sample=>sample.audio).filter(Boolean);
+  const audioTotal=key=>!audioSamples.length || audioSamples.some(sample=>sample[key]===null)?null:audioSamples.reduce((sum,sample)=>sum+sample[key],0);
+  const audioPackets=audioTotal("receivedPackets"),audioLost=audioTotal("lostPackets");
   return {
     intervals: samples.length, observedSeconds: seconds,
     fps: ratio(total("decodedFrames"), seconds),
@@ -443,6 +463,12 @@ function summarizePerformance(samples) {
     resolution: samples.at(-1)?.width && samples.at(-1)?.height
       ? `${samples.at(-1).width}×${samples.at(-1).height}` : null,
     route: samples.at(-1)?.route || null,
+    decoder:samples.at(-1)?.decoder || null,powerEfficientDecoder:samples.at(-1)?.powerEfficientDecoder ?? null,
+    hostVideo:samples.map(sample=>sample.hostTimings?.video).filter(Boolean).at(-1) || null,
+    audio:{observedSeconds:audioTotal("seconds"),payloadMbps:ratio(audioTotal("payloadBytes"),audioTotal("seconds"),8/1e6),
+      packetLossPercent:audioPackets!==null && audioLost!==null?ratio(audioLost,audioPackets+audioLost,100):null,
+      concealedSamplesPercent:ratio(audioTotal("concealedSamples"),audioTotal("receivedSamples"),100),
+      concealmentEvents:audioTotal("concealmentEvents"),jitterBufferMs:ratio(audioTotal("bufferSeconds"),audioTotal("bufferSamples"),1000)},
   };
 }
 
@@ -455,6 +481,10 @@ function measurementText(result) {
     `Network RTT median/p95 ${value(s.networkRTTMedianMs)}/${value(s.networkRTTP95Ms)} ms`,
     `Packet loss ${value(s.packetLossPercent, 2)}%; dropped frames ${s.droppedFrames ?? "unavailable"}; freezes ${s.freezes ?? "unavailable"}`,
     `Decode ${value(s.decodeMs, 2)} ms/frame; jitter buffer ${value(s.jitterBufferMs)} ms`,
+    `Decoder ${s.decoder || "unavailable"}; power-efficient ${s.powerEfficientDecoder===null || s.powerEfficientDecoder===undefined?"unavailable":s.powerEfficientDecoder}`,
+    `Audio payload ${value(s.audio?.payloadMbps,3)} Mbps; loss ${value(s.audio?.packetLossPercent,2)}%; concealed samples ${value(s.audio?.concealedSamplesPercent,2)}%; concealment events ${s.audio?.concealmentEvents ?? "unavailable"}; jitter buffer ${value(s.audio?.jitterBufferMs)} ms`,
+    `Host video target ${value(s.hostVideo?.target_bitrate_mbps,3)} Mbps; recent encoded payload ${value(s.hostVideo?.recent_payload_mbps,3)} Mbps over ${value(s.hostVideo?.window_seconds)}s`,
+    `Host peak frame ${value(s.hostVideo?.largest_frame_bytes/1024)} KiB / ${s.hostVideo?.largest_frame_packets ?? "unavailable"} packets; NVENC initializations/rate updates/keyframes (peer totals) ${s.hostVideo?.rate_control?.context_initializations ?? "unavailable"}/${s.hostVideo?.rate_control?.bitrate_updates ?? "unavailable"}/${s.hostVideo?.rate_control?.keyframes ?? "unavailable"}`,
     "RTT and receiver timings do not measure input-to-screen delay."].join("\n");
 }
 
@@ -480,11 +510,11 @@ function endMeasurement(reason) {
   if (!measurement) return;
   clearTimeout(measurement.timer);
   lastMeasurement = {
-    version: 1, measuredUTC: measurement.startedUTC, reason,
+    version: 2, measuredUTC: measurement.startedUTC, reason,
     browser: navigator.userAgent, summary: summarizePerformance(measurement.samples),
     samples: measurement.samples,
     inputProbe: inputProbeResult,
-    scope: "Receiver statistics only; video payload excludes transport overhead; no input-to-screen measurement",
+    scope: "Receiver video/audio statistics and optional host encoder counters; payload excludes transport overhead; host rates use a recent bounded window; no input-to-screen measurement",
   };
   measurement = null;
   performanceSummary.textContent = measurementText(lastMeasurement);
