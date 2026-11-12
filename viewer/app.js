@@ -670,7 +670,8 @@ async function connect(password, intent = null, previous = null) {
         session.maxFPS = message.maxFPS || 60;
         for (const option of fpsSelect.options) option.disabled = Number(option.value) > session.maxFPS;
         if (message.videoCodec) document.querySelector("#codec-status").textContent =
-          `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoCodec === "AV1" ? " · up to 720p/30 FPS for the negotiated AV1 level" : ""}. Codec changes keep this stream until its replacement is ready.`;
+          `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoCodec === "AV1" ? " · up to 720p/30 FPS for the negotiated AV1 level" : ""}. ` +
+          (session.handoverToken ? "Codec changes keep this stream until its replacement is ready." : "This host reconnects when its codec changes.");
         fileStatus.textContent = session.features.files ? "Ready. Maximum file size: 16 GiB." : "Restart the updated host to enable file transfer.";
         if (session.features.videoSettings) {
           fpsSelect.value = String(message.fps);
