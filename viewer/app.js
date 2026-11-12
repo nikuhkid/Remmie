@@ -100,7 +100,7 @@ function desktopControls(session) {
   const features = session?.features || {};
   const filesBusy = !!(session?.fileBusy || session?.fileCancelling || session?.handoverFrom);
   profileSelect.disabled = !connected || !features.profiles || !!session.pendingControl || !!session.handoverFrom;
-  document.querySelector("#input-probe").disabled = !connected || !features.inputProbe || !!session.handoverFrom;
+  document.querySelector("#input-probe").disabled = !connected || !features.inputProbe || !!session.handoverFrom || !!session.pendingControl || !!session.probing;
   fullscreenButton.disabled = !connected || !workspace.requestFullscreen;
   releaseButton.disabled = !connected;
   relativeButton.disabled = !connected || !features.relativeMouse || !video.requestPointerLock;
@@ -1162,7 +1162,7 @@ profileSelect.addEventListener("change",()=>{ if(active?.authorized) requestCont
 
 let inputProbeResult=null;
 document.querySelector("#input-probe").addEventListener("click",()=>{
-  if(active?.authorized && !active.probing) {
+  if(active?.authorized && !active.probing && !active.pendingControl) {
     active.probing=true;
     document.querySelector("#input-probe-status").textContent="Opening the temporary test square…";
     requestControl(active,{type:"probe-start"});
@@ -1203,7 +1203,7 @@ async function runInputProbe(session,target) {
     inputProbeResult={samplesMs:samples,medianMs:sorted[1],scope:"Controlled Windows F13/hotkey -> painted test window -> capture/encode/network -> browser frame callback; includes scheduling, not arbitrary app latency or physical display scanout"};
     text.textContent=`Input → picture: ${sorted[1].toFixed(1)} ms median (${samples.map(v=>v.toFixed(1)).join(", ")} ms). Controlled test; excludes physical display scanout and arbitrary application processing.`;
   } catch(error) {text.textContent=error.message;}
-  finally {session.probing=false;send(session,{type:"probe-stop"});}
+  finally {session.probing=false;send(session,{type:"probe-stop"});desktopControls(active);}
 }
 
 async function localClipboardText() {
