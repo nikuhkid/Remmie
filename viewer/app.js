@@ -56,6 +56,10 @@ let active = null;
 let desired = null;
 let measurement = null;
 let lastMeasurement = null;
+let captureVersion = 0;
+let keyboardAttempt = 0;
+let mouseCaptureWanted = false;
+let captureFailure = null;
 
 function forgetConnection() {
   if (!desired) return;
@@ -128,18 +132,56 @@ function desktopControls(session) {
 }
 
 function stopCapture(session) {
+  captureVersion++;
+  mouseCaptureWanted = false;
+  captureFailure = null;
   releaseInput(session);
   globalThis.navigator?.keyboard?.unlock();
   if (document.pointerLockElement === video) document.exitPointerLock();
 }
 
 async function captureKeyboard() {
-  if (document.fullscreenElement !== workspace || !navigator.keyboard?.lock) return;
+  if (document.fullscreenElement !== workspace || !navigator.keyboard?.lock || !inputSession() || inputSession().permissions?.keyboard === false) return false;
+  const version = captureVersion, attempt = ++keyboardAttempt;
   try {
     await navigator.keyboard.lock();
-    controlStatus.textContent = "Keyboard capture active. Ctrl+Alt+Esc releases controls.";
+    if (version !== captureVersion || document.fullscreenElement !== workspace) {
+      if (attempt === keyboardAttempt) navigator.keyboard.unlock();
+      return false;
+    }
+    if (attempt !== keyboardAttempt) return false;
+    controlStatus.textContent = captureFailure || "Keyboard capture active. Ctrl+Alt+C exits immersive mode.";
+    return true;
   } catch {
-    controlStatus.textContent = "Fullscreen active. This browser keeps some shortcuts; use the shortcut menu.";
+    if (version === captureVersion && attempt === keyboardAttempt)
+      controlStatus.textContent = "Fullscreen active. This browser keeps some shortcuts; use the shortcut menu.";
+    return false;
+  }
+}
+
+async function captureMouse(raw = true) {
+  const session = inputSession();
+  if (!session || !session.features.relativeMouse || session.permissions?.mouse === false || !video.requestPointerLock) return false;
+  const version = captureVersion;
+  captureFailure = null;
+  mouseCaptureWanted = true;
+  try {
+    // Start synchronously: fullscreen consumes the click's transient activation.
+    if (raw) await video.requestPointerLock({unadjustedMovement: true});
+    else await video.requestPointerLock();
+    if (version !== captureVersion) {
+      if (!mouseCaptureWanted && document.pointerLockElement === video) document.exitPointerLock();
+      return false;
+    }
+    return true;
+  } catch (error) {
+    if (raw && error.name === "NotSupportedError" && version === captureVersion) return captureMouse(false);
+    if (version === captureVersion) {
+      mouseCaptureWanted = false;
+      captureFailure = `Mouse capture unavailable: ${error.message}`;
+      controlStatus.textContent = captureFailure;
+    }
+    return false;
   }
 }
 
@@ -776,7 +818,7 @@ async function connect(password, intent = null, previous = null) {
         if (session.features.monitors) session.pendingControl = "monitors-get";
         else if (session.restoreFPS || session.restoreResolution) completeControl(session);
         help.textContent = session.canInput
-          ? "Click the desktop to send input. Ctrl+Alt+Esc releases keyboard and mouse capture."
+          ? "Click the desktop to send input. Fullscreen enables immersive keyboard and mouse. Ctrl+Alt+C releases both."
           : "Local preview. Open the remote viewer on another device for control.";
         connecting(session, "Waiting for the session…",
           "Password accepted, but the session did not start.");
@@ -1094,15 +1136,19 @@ video.addEventListener("wheel", event => {
   send(session, { type: "wheel", dx: wheelUnits(event.deltaX), dy: wheelUnits(-event.deltaY), relative, ...position });
 }, { passive: false });
 
+document.addEventListener("keydown", event => {
+  if (!active?.authorized || !event.ctrlKey || !event.altKey || !["KeyC", "Escape"].includes(event.code)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  stopCapture(inputSession() || active);
+  controlStatus.textContent = "Immersive mode released. Fullscreen stays open.";
+  menuToggle.focus({preventScroll: true});
+}, true);
+
 video.addEventListener("keydown", event => {
   const session = inputSession();
   if (!session || event.isComposing || !event.code) return;
   event.preventDefault();
-  if (event.code === "Escape" && event.ctrlKey && event.altKey) {
-    stopCapture(session);
-    releaseButton.focus();
-    return;
-  }
   if (event.code === "KeyV" && event.ctrlKey && !event.altKey && session.features.clipboardSync) {
     if (!event.repeat) pasteClipboard(session);
     return;
@@ -1129,12 +1175,20 @@ fullscreenButton.addEventListener("click", async () => {
     if (document.fullscreenElement === workspace) {
       await document.exitFullscreen();
     } else {
+      const version = captureVersion;
+      setMenu(false, false);
+      video.focus({ preventScroll: true });
+      const mouse = captureMouse(false);
       await workspace.requestFullscreen();
+      if (version !== captureVersion) return;
       video.focus({ preventScroll: true });
       await captureKeyboard();
+      await mouse;
     }
   } catch (error) {
-    controlStatus.textContent = `Fullscreen unavailable: ${error.message}`;
+    stopCapture(active);
+    captureFailure = `Fullscreen unavailable: ${error.message}`;
+    controlStatus.textContent = captureFailure;
   }
 });
 document.addEventListener("fullscreenchange", () => {
@@ -1151,30 +1205,26 @@ relativeButton.addEventListener("click", async () => {
     document.exitPointerLock();
     return;
   }
-  try {
-    await video.requestPointerLock({ unadjustedMovement: true });
-  } catch (error) {
-    if (error.name === "NotSupportedError") {
-      try { await video.requestPointerLock(); } catch (failure) {
-        controlStatus.textContent = `Mouse capture unavailable: ${failure.message}`;
-      }
-    } else {
-      controlStatus.textContent = `Mouse capture unavailable: ${error.message}`;
-    }
-  }
+  await captureMouse();
 });
 document.addEventListener("pointerlockchange", () => {
   releaseInput(active);
   const locked = document.pointerLockElement === video;
+  if (locked && !mouseCaptureWanted) { document.exitPointerLock(); return; }
   relativeButton.setAttribute("aria-pressed", String(locked));
   relativeButton.textContent = locked ? "Release mouse" : "Relative mouse";
-  if (locked) video.focus({ preventScroll: true });
+  if (locked) {
+    setMenu(false, false);
+    video.focus({ preventScroll: true });
+    captureKeyboard();
+  }
   controlStatus.textContent = locked
-    ? "Relative mouse active. Ctrl+Alt+Esc releases controls."
-    : "Mouse capture released.";
+    ? "Relative mouse active. Ctrl+Alt+C exits immersive mode."
+    : captureFailure || "Mouse capture released.";
 });
 document.addEventListener("pointerlockerror", () => {
-  controlStatus.textContent = "Mouse capture failed. Activate this browser window and try Relative mouse again.";
+  captureFailure ||= "Mouse capture failed. Activate this browser window and try Relative mouse again.";
+  controlStatus.textContent = captureFailure;
 });
 shortcutButton.addEventListener("click", () => {
   const session = inputSession();
@@ -1226,11 +1276,11 @@ document.querySelector("#clipboard-copy").addEventListener("click", async () => 
   }
 });
 
-function setMenu(open) {
+function setMenu(open, restoreFocus = true) {
   if (menuToggle.hidden || menuToggle.disabled || !active?.authorized) open = false;
   sessionMenu.hidden = !open;
   menuToggle.setAttribute("aria-expanded", String(open));
-  if (!open && !menuToggle.hidden) menuToggle.focus({preventScroll: true});
+  if (!open && restoreFocus && !menuToggle.hidden) menuToggle.focus({preventScroll: true});
 }
 menuToggle.addEventListener("click", () => setMenu(sessionMenu.hidden));
 document.querySelector("#menu-close").addEventListener("click", () => setMenu(false));
