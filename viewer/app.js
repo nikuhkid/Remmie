@@ -37,6 +37,8 @@ const audioToggle = document.querySelector("#audio-toggle");
 const audioVolume = document.querySelector("#audio-volume");
 const audioStatus = document.querySelector("#audio-status");
 const resolutionSelect = document.querySelector("#video-resolution");
+const profileSelect = document.querySelector("#stream-profile");
+const receiverBuffer = document.querySelector("#receiver-buffer");
 const resolutionSizes = ["native", "3840x2160", "3840x1600", "3440x1440", "2560x1600", "2560x1440", "2560x1080", "1920x1200", "1920x1080", "1680x1050", "1600x1200", "1600x900", "1366x768", "1280x1024", "1280x800", "1280x720", "1024x768", "960x540", "640x360"];
 let selectedResolution = null;
 let audioWanted = true;
@@ -87,15 +89,18 @@ function connecting(session, message, timeoutMessage) {
   clearTimeout(session.connectTimer);
   session.timeoutMessage = timeoutMessage;
   session.connectTimer = setTimeout(
-    () => finish(session, session.timeoutMessage, "error", true, true), 45000);
-  show(message, "connecting");
+    () => finish(session, session.timeoutMessage, "error", true, true), session.handoverFrom ? Math.max(1,session.handoverDeadline-performance.now()) : 45000);
+  show(session.handoverFrom ? "Preparing the new codec; the previous stream remains active…" : message,
+    session.handoverFrom ? "connected" : "connecting");
 }
 
 function desktopControls(session) {
   const connected = session?.authorized && video.readyState >= 2 &&
     session.peer.connectionState === "connected";
   const features = session?.features || {};
-  const filesBusy = !!(session?.fileBusy || session?.fileCancelling);
+  const filesBusy = !!(session?.fileBusy || session?.fileCancelling || session?.handoverFrom);
+  profileSelect.disabled = !connected || !features.profiles || !!session.pendingControl || !!session.handoverFrom;
+  document.querySelector("#input-probe").disabled = !connected || !features.inputProbe || !!session.handoverFrom;
   fullscreenButton.disabled = !connected || !workspace.requestFullscreen;
   releaseButton.disabled = !connected;
   relativeButton.disabled = !connected || !features.relativeMouse || !video.requestPointerLock;
@@ -104,13 +109,13 @@ function desktopControls(session) {
   clipboardSend.disabled = clipboardGet.disabled = !connected || !features.clipboard || !!session.pendingControl;
   monitorSelect.disabled = !connected || !session.displays?.length || !!session.pendingControl;
   performanceStart.disabled = !connected || !!measurement;
-  codecSelect.disabled = !connected || !session?.codecs?.length;
+  codecSelect.disabled = !connected || !session?.codecs?.length || !!session.handoverFrom || filesBusy || !!session.probing;
   resolutionSelect.disabled = !connected || !features.resolutions || !!session.pendingControl;
   audioToggle.disabled = audioVolume.disabled = !session?.authorized || !features.audio;
   fpsSelect.disabled = !connected || !features.videoSettings || !!session.pendingControl;
   document.querySelector("#clipboard-enable").disabled = !connected || !features.clipboardSync;
   for (const id of ["file-upload", "file-pick"]) {
-    document.querySelector(`#${id}`).disabled = !connected || !features.files || filesBusy;
+    document.querySelector(`#${id}`).disabled = !connected || !features.files || filesBusy || session.permissions?.[id==="file-upload" ? "uploads" : "downloads"]===false;
   }
   document.querySelector("#file-download").disabled = !connected || !features.files || !session?.download || filesBusy;
   document.querySelector("#file-cancel").disabled = !session?.fileBusy || !!session?.fileCancelling;
@@ -215,11 +220,27 @@ async function requestJSON(base, path, options) {
 
 function send(session, message) {
   if (session?.channel?.readyState !== "open") return false;
+  if (session.features?.pointerState && ["move","relative-move"].includes(message.type) && session.pointerChannel?.readyState === "open") {
+    session.pointer ||= {epoch:crypto.randomUUID(),seq:0,totalX:0,totalY:0};
+    const p=session.pointer;
+    if (!p.announced) { session.channel.send(JSON.stringify({type:"pointer-reset",epoch:p.epoch})); p.announced=true; }
+    const relative=message.type==="relative-move";
+    if (relative) { p.totalX+=message.dx; p.totalY+=message.dy; }
+    p.snapshot={epoch:p.epoch,seq:++p.seq,relative,...(relative ? {totalX:p.totalX,totalY:p.totalY} : {x:message.x,y:message.y})};
+    session.pointerChannel.send(JSON.stringify(p.snapshot));
+    return true;
+  }
+  if (["button","wheel"].includes(message.type) && session.pointer?.snapshot) message={...message,pointer:session.pointer.snapshot};
   session.channel.send(JSON.stringify(message));
+  if (message.type==="release" && session.features?.pointerState) {
+    session.pointer={epoch:crypto.randomUUID(),seq:0,totalX:0,totalY:0,announced:true};
+    session.channel.send(JSON.stringify({type:"pointer-reset",epoch:session.pointer.epoch}));
+  }
   return true;
 }
 
 function releaseInput(session) {
+  session = session?.handoverFrom || session;
   if (!session) return;
   cancelAnimationFrame(session.motionFrame);
   session.motionFrame = 0;
@@ -231,6 +252,22 @@ function releaseInput(session) {
 
 function finish(session, message, state = "idle", tellHost = false, recover = false) {
   if (active !== session) return;
+  if (session.handoverFrom) {
+    const previous = session.handoverFrom;
+    send(session, {type: "disconnect"});
+    disposeSession(session);
+    session.handoverFrom = null;
+    active = previous;
+    selectedCodec = previous.videoCodec || "auto";
+    codecSelect.value = selectedCodec;
+    if (previous.peer.connectionState === "connected" && recover) {
+      showDesktop(previous);
+      document.querySelector("#codec-status").textContent = `Kept ${previous.videoCodec}: ${message}`;
+      return;
+    }
+    finish(previous, message, state, tellHost, recover);
+    return;
+  }
   if (measurement?.session === session) endMeasurement("Connection ended; partial measurement.");
   active = null;
   document.body.classList.remove("connected");
@@ -248,6 +285,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   clearTimeout(session.controlTimer);
   clearTimeout(session.disconnectTimer);
   clearInterval(session.clipboardTimer);
+  clearInterval(session.pointerTimer);
   session.fileAbort?.abort();
   session.fileToken = "";
   session.password = "";
@@ -284,7 +322,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
 }
 
 function heartbeat(session) {
-  if (active !== session) return;
+  if (active !== session && active?.handoverFrom !== session) return;
   if (session.features?.heartbeat && Date.now() - session.lastPong > 15000) {
     finish(session, "The remote host stopped responding.", "error", true, true);
     return;
@@ -360,6 +398,9 @@ function performanceInterval(report, previous) {
     stat.type === "candidate-pair" && stat.nominated && stat.state === "succeeded");
   const types = [report.get(pair?.localCandidateId)?.candidateType, report.get(pair?.remoteCandidateId)?.candidateType];
   const sample = {
+    hostTimings: active?.hostTimings || null,
+    decoder: inbound.decoderImplementation || null,
+    powerEfficientDecoder: inbound.powerEfficientDecoder ?? null,
     seconds, decodedFrames: decoded, payloadBytes: delta("bytesReceived"),
     droppedFrames: delta("framesDropped"), receivedPackets: received, lostPackets: lost,
     decodeSeconds: delta("totalDecodeTime"), bufferSeconds: delta("jitterBufferDelay"),
@@ -420,7 +461,10 @@ function updatePerformance(session, report) {
   const number = value => Number.isFinite(value) ? value.toFixed(1) : "?";
   const bitrate = Number.isFinite(sample.payloadMbps) ? sample.payloadMbps.toFixed(3) : "?";
   performanceLive.textContent = `${number(sample.fps)} FPS · ${bitrate} Mbps video · ` +
-    `${number(sample.networkRTTMs)} ms network RTT · ${sample.codec || "codec unknown"}`;
+    `${number(sample.networkRTTMs)} ms network RTT · ${sample.codec || "codec unknown"}` +
+    (session.hostTimings ? ` · ${session.hostTimings.backend} capture ${number(session.hostTimings.capture?.median_ms)} ms · encode ${number(session.hostTimings.encode?.median_ms)} ms` : "");
+  if (Number.isFinite(sample.packetLossPercent) && Number.isFinite(sample.jitterBufferMs))
+    send(session,{type:"receiver-report",loss:sample.packetLossPercent,buffer:sample.jitterBufferMs});
   if (measurement?.session === session) {
     measurement.samples.push(sample);
     const remaining = Math.max(0, 60 - (performance.now() - measurement.started) / 1000);
@@ -435,6 +479,7 @@ function endMeasurement(reason) {
     version: 1, measuredUTC: measurement.startedUTC, reason,
     browser: navigator.userAgent, summary: summarizePerformance(measurement.samples),
     samples: measurement.samples,
+    inputProbe: inputProbeResult,
     scope: "Receiver statistics only; video payload excludes transport overhead; no input-to-screen measurement",
   };
   measurement = null;
@@ -469,8 +514,8 @@ performanceSave.addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
-async function connect(password, intent = null) {
-  if (active) return;
+async function connect(password, intent = null, previous = null) {
+  if (active && !previous) return;
   if (!intent) {
     let base;
     try { base = signalingBase(serverField.value); }
@@ -488,7 +533,23 @@ async function connect(password, intent = null) {
     authorized: false,
     buttons: new Set(),
     motionFrame: 0,
+    handoverFrom: previous,
+    handoverDeadline: previous ? performance.now()+20000 : null,
   };
+  const video = previous ? document.createElement("video") : document.querySelector("#desktop");
+  const audio = previous ? document.createElement("audio") : document.querySelector("#desktop-audio");
+  if (previous) {
+    session.stagedVideo = video;
+    session.stagedAudio = audio;
+    video.autoplay = video.muted = video.playsInline = true;
+    audio.muted = true;
+    video.style.cssText = "position:fixed;width:2px;height:2px;opacity:.01;pointer-events:none;bottom:0;right:0";
+    document.body.append(video);
+    video.addEventListener("playing", () => {
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => showDesktop(session));
+      else showDesktop(session);
+    });
+  }
   active = session;
   connectButton.disabled = true;
   disconnectButton.disabled = false;
@@ -515,13 +576,14 @@ async function connect(password, intent = null) {
     if (!session.codecs.includes(selectedCodec)) selectedCodec = "auto";
     codecSelect.value = selectedCodec;
     document.querySelector("#codec-status").textContent = session.codecs.length
-      ? "Available on both devices. Changing codec reconnects this session."
+      ? "Available on both devices. A new codec is prepared before swapping streams."
       : "This host needs the controls update before codec selection is available.";
     if (selectedCodec !== "auto") {
       transceiver.setCodecPreferences(browserCodecs.filter(c =>
         videoCodecSupported(c, selectedCodec) || c.mimeType.toLowerCase() === "video/rtx"));
     }
     peer.addEventListener("track", event => {
+      tuneReceiver(event.receiver);
       if (active === session && event.track.kind === "video") {
         video.srcObject = event.streams[0] || new MediaStream([event.track]);
         video.play().catch(() => {});
@@ -553,6 +615,15 @@ async function connect(password, intent = null) {
     });
     const channel = peer.createDataChannel(channelLabel);
     session.channel = channel;
+    session.pointerChannel = peer.createDataChannel("remmie-pointer-v1",{ordered:false,maxRetransmits:0});
+    session.pointerChannel.addEventListener("message",event=>{
+      try { const ack=JSON.parse(event.data); if(ack.epoch===session.pointer?.epoch && Number.isSafeInteger(ack.seq))session.pointer.acked=ack.seq; } catch {}
+    });
+    session.pointerTimer=setInterval(()=>{
+      const p=session.pointer;
+      if(p?.snapshot && (p.acked ?? -1)<p.snapshot.seq && session.pointerChannel.readyState==="open")
+        session.pointerChannel.send(JSON.stringify(p.snapshot));
+    },100);
     peer.addEventListener("iceconnectionstatechange", () => {
       if (active === session && channel.readyState === "connecting" &&
           ["connected", "completed"].includes(peer.iceConnectionState)) {
@@ -568,12 +639,17 @@ async function connect(password, intent = null) {
     });
     channel.addEventListener("close", () => finish(session, "The control channel closed.", "idle", false, true));
     channel.addEventListener("message", event => {
-      if (active !== session) return;
+      if (active !== session && active?.handoverFrom !== session) return;
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
+      if (active !== session) { if(message?.type==="pong")session.lastPong=Date.now(); return; }
       if (message?.type === "ready" && !session.authorized) {
         session.authorized = true;
+        session.handoverToken = message.handoverToken;
+        session.videoCodec = message.videoCodec;
+        profileSelect.value = message.profile || "general";
         session.canInput = message.input === true;
+        session.permissions=message.permissions || {};
         session.features = message.features || {};
         session.audioState = "starting";
         updateAudio(session);
@@ -594,13 +670,13 @@ async function connect(password, intent = null) {
         session.maxFPS = message.maxFPS || 60;
         for (const option of fpsSelect.options) option.disabled = Number(option.value) > session.maxFPS;
         if (message.videoCodec) document.querySelector("#codec-status").textContent =
-          `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoCodec === "AV1" ? " · up to 720p/30 FPS for the negotiated AV1 level" : ""}. Changing codec reconnects this session.`;
+          `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoCodec === "AV1" ? " · up to 720p/30 FPS for the negotiated AV1 level" : ""}. Codec changes keep this stream until its replacement is ready.`;
         fileStatus.textContent = session.features.files ? "Ready. Maximum file size: 16 GiB." : "Restart the updated host to enable file transfer.";
         if (session.features.videoSettings) {
           fpsSelect.value = String(message.fps);
           if (selectedFPS && selectedFPS !== message.fps) session.restoreFPS = Math.min(selectedFPS, session.maxFPS);
         }
-        if (session.features.clipboardSync) {
+        if (session.features.clipboardSync && !session.handoverFrom) {
           session.clip = { baseline: false, busy: false, pending: null, remote: null };
           session.clipboardTimer = setInterval(() => syncClipboard(session), 750);
           syncClipboard(session);
@@ -622,8 +698,43 @@ async function connect(password, intent = null) {
         if (!message.features && session.canInput) {
           controlStatus.textContent = "Restart the host to enable the new desktop controls.";
         }
+      } else if (message?.type === "handover-active" && session.handoverFrom) {
+        const old = session.handoverFrom;
+        session.handoverFrom = null;
+        session.fileToken = message.fileToken;
+        profileSelect.value=message.profile || "general";
+        session.download = old.download;
+        session.buttons = old.buttons;
+        session.clip = old.clip ? {...old.clip,pending:null,busy:false} : null;
+        document.querySelector("#desktop").srcObject = video.srcObject;
+        document.querySelector("#desktop").play().catch(() => {});
+        document.querySelector("#desktop-audio").srcObject = audio.srcObject;
+        if (measurement?.session === old) endMeasurement("Codec changed; partial measurement.");
+        disposeSession(old);
+        video.srcObject = null; video.remove(); audio.srcObject = null;
+        if (session.features.clipboardSync) {
+          session.clip ||= {last:null,pending:null,remote:null};
+          session.clipboardTimer = setInterval(() => syncClipboard(session),750);
+        }
+        playAudio(session);
+        showDesktop(session);
       } else if (message?.type === "pong" && session.authorized) {
         session.lastPong = Date.now();
+        session.hostTimings = message.timings || null;
+      } else if (message?.type === "permissions" && session.authorized) {
+        const p=message.permissions;
+        releaseInput(session);
+        session.canInput=!!(p.keyboard || p.mouse);
+        session.permissions=p;
+        session.features.clipboardSync=session.features.clipboard=!!p.clipboard;
+        session.features.audio=!!p.sound;
+        session.features.files=!!(p.uploads || p.downloads);
+        if (!p.clipboard) {session.clip=null;clearInterval(session.clipboardTimer);}
+        else if (!session.clip) {session.clip={last:null,pending:null,remote:null};session.clipboardTimer=setInterval(()=>syncClipboard(session),750);}
+        updateAudio(session);desktopControls(session);
+      } else if (message?.type === "probe-ready" && session.authorized) {
+        completeControl(session);
+        runInputProbe(session,message);
       } else if (message?.type === "monitors" && session.authorized) {
         session.displays = Array.isArray(message.displays) ? message.displays.filter(display =>
           Number.isInteger(display.id) && display.id > 0 && display.width > 0 && display.height > 0
@@ -634,6 +745,8 @@ async function connect(password, intent = null) {
         session.selectedMonitor = monitorSelect.value;
         completeControl(session);
       } else if (message?.type === "video-settings" && session.authorized) {
+        if (message.profile) profileSelect.value=message.profile;
+        if (Number.isFinite(message.bufferMs)) { receiverBuffer.value=String(message.bufferMs); tuneReceivers(); }
         selectedFPS = message.fps;
         fpsSelect.value = String(message.fps);
         if (message.resolution) {
@@ -661,6 +774,7 @@ async function connect(password, intent = null) {
         completeControl(session);
         controlStatus.textContent = "The remote clipboard was updated.";
       } else if (message?.type === "control-error" && session.authorized) {
+        if (message.operation==="probe-start") { session.probing=false;document.querySelector("#input-probe-status").textContent=message.message; }
         if (message.operation === "clipboard-sync") {
           if (session.clip) session.clip.pending = null;
           clipboardStatus.textContent = message.message;
@@ -686,7 +800,7 @@ async function connect(password, intent = null) {
     const answer = await requestJSON(base, "offer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(peer.localDescription),
+      body: JSON.stringify({...peer.localDescription.toJSON(), ...(previous ? {handover:previous.handoverToken} : {})}),
       signal,
     });
     if (active === session) {
@@ -701,6 +815,13 @@ async function connect(password, intent = null) {
 }
 
 function showDesktop(session) {
+  if (session.handoverFrom) {
+    if (session.authorized && session.stagedVideo?.readyState >= 2 && session.stagedVideo.videoWidth && !session.commitSent) {
+      session.commitSent = true;
+      send(session, {type:"handover-commit"});
+    }
+    return;
+  }
   if (active !== session || !session.authorized || session.peer.connectionState !== "connected" ||
       video.readyState < 2 || !video.videoWidth) return;
   clearTimeout(session.connectTimer);
@@ -712,6 +833,7 @@ function showDesktop(session) {
   document.title = "Remmie";
   menuToggle.hidden = false;
   menuToggle.disabled = false;
+  if (!session.presented) {session.presented=true;send(session,{type:"viewer-presented"});}
   desktopControls(session);
   show(session.canInput ? "Connected to the remote desktop." : "Previewing the remote desktop.", "connected");
 }
@@ -767,8 +889,9 @@ window.addEventListener("offline", () => {
 });
 
 function inputSession() {
-  return active?.canInput && !active.monitorChanging && active.peer.connectionState === "connected" && video.videoWidth
-    ? active : null;
+  const session = active?.handoverFrom || active;
+  return session?.canInput && !session.monitorChanging && session.peer.connectionState === "connected" && video.videoWidth
+    ? session : null;
 }
 
 function point(event, clamp = false) {
@@ -1006,10 +1129,82 @@ fpsSelect.addEventListener("change", () => {
 });
 codecSelect.addEventListener("change", () => {
   const session = active;
-  if (!session?.authorized || !desired) return;
+  if (!session?.authorized || !desired || session.handoverFrom || session.probing || session.fileBusy) return;
   selectedCodec = codecSelect.value;
-  finish(session, "Applying the video codec.", "connecting", true, true);
+  if (session.handoverToken) connect(desired.password, desired, session);
+  else finish(session, "Applying the video codec.", "connecting", true, true);
 });
+
+function disposeSession(session) {
+  session.abort.abort();
+  for (const key of ["connectTimer","controlTimer","disconnectTimer"]) clearTimeout(session[key]);
+  for (const key of ["pingTimer","statsTimer","clipboardTimer","pointerTimer"]) clearInterval(session[key]);
+  cancelAnimationFrame(session.motionFrame);
+  session.fileAbort?.abort();
+  session.peer?.close();
+  if (session.stagedVideo) { session.stagedVideo.srcObject = null; session.stagedVideo.remove(); }
+  if (session.stagedAudio) { session.stagedAudio.pause(); session.stagedAudio.srcObject = null; }
+  session.password = "";
+}
+
+function tuneReceiver(receiver) {
+  if (!receiver) return;
+  try {
+    if ("jitterBufferTarget" in receiver) {
+      receiver.jitterBufferTarget = receiverBuffer.value === "auto" ? null : Number(receiverBuffer.value);
+      document.querySelector("#receiver-status").textContent = receiverBuffer.value === "auto" ? "Using the browser's buffering policy." : `Requested ${receiverBuffer.value} ms. The browser may buffer more; compare measured jitter and freezes.`;
+    } else document.querySelector("#receiver-status").textContent="This browser does not expose a buffering target; its normal policy remains active.";
+  } catch { document.querySelector("#receiver-status").textContent="The browser rejected that target; its normal buffering policy remains active."; }
+}
+function tuneReceivers() { for (const receiver of active?.peer?.getReceivers() || []) tuneReceiver(receiver); }
+receiverBuffer.addEventListener("change",tuneReceivers);
+profileSelect.addEventListener("change",()=>{ if(active?.authorized) requestControl(active,{type:"video-settings",profile:profileSelect.value}); });
+
+let inputProbeResult=null;
+document.querySelector("#input-probe").addEventListener("click",()=>{
+  if(active?.authorized && !active.probing) {
+    active.probing=true;
+    document.querySelector("#input-probe-status").textContent="Opening the temporary test square…";
+    requestControl(active,{type:"probe-start"});
+  }
+});
+async function runInputProbe(session,target) {
+  const text=document.querySelector("#input-probe-status");
+  const canvas=document.createElement("canvas");canvas.width=canvas.height=1;
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});
+  const samples=[];
+  function nextFrame() {
+    return new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>{if(id)video.cancelVideoFrameCallback?.(id);reject(new Error("Test square was not observed."));},2500);
+      const callback=()=>{clearTimeout(timeout);resolve();};
+      const id=video.requestVideoFrameCallback ? video.requestVideoFrameCallback(callback) : 0;
+      if(!id)setTimeout(callback,50);
+    });
+  }
+  function level() {
+    ctx.drawImage(video,Math.round(target.x*video.videoWidth),Math.round(target.y*video.videoHeight),1,1,0,0,1,1);
+    const p=ctx.getImageData(0,0,1,1).data;return (p[0]+p[1]+p[2])/3;
+  }
+  try {
+    if (![target.x,target.y].every(v=>Number.isFinite(v)&&v>0&&v<1))throw new Error("Invalid test position");
+    await nextFrame();
+    for(let i=0;i<3;i++) {
+      const before=level();
+      const started=performance.now();
+      send(session,{type:"key",code:"F13",pressed:true});
+      send(session,{type:"key",code:"F13",pressed:false});
+      do { await nextFrame(); if(active!==session)throw new Error("Session changed during test"); }
+      while(Math.abs(level()-before)<100 && performance.now()-started<2500);
+      if(Math.abs(level()-before)<100)throw new Error("No test response; check keyboard permission and display visibility.");
+      samples.push(performance.now()-started);
+      await new Promise(resolve=>setTimeout(resolve,150));
+    }
+    const sorted=[...samples].sort((a,b)=>a-b);
+    inputProbeResult={samplesMs:samples,medianMs:sorted[1],scope:"Controlled Windows F13/hotkey -> painted test window -> capture/encode/network -> browser frame callback; includes scheduling, not arbitrary app latency or physical display scanout"};
+    text.textContent=`Input → picture: ${sorted[1].toFixed(1)} ms median (${samples.map(v=>v.toFixed(1)).join(", ")} ms). Controlled test; excludes physical display scanout and arbitrary application processing.`;
+  } catch(error) {text.textContent=error.message;}
+  finally {session.probing=false;send(session,{type:"probe-stop"});}
+}
 
 async function localClipboardText() {
   if (navigator.clipboard?.read) {
@@ -1116,7 +1311,7 @@ function updateAudio(session) {
 }
 async function playAudio(session) {
   if (active !== session) return;
-  audio.muted = !session.authorized || !audioWanted;
+  audio.muted = !session.authorized || !session.features?.audio || !audioWanted;
   audio.volume = Number(audioVolume.value) / 100;
   if (session.authorized && session.features?.audio && audioWanted && audio.srcObject) {
     try { await audio.play(); session.audioBlocked = false; }
