@@ -1124,6 +1124,27 @@ video.addEventListener("lostpointercapture", () => {
 video.addEventListener("contextmenu", event => {
   if (inputSession()) event.preventDefault();
 });
+function nativeWheelDelta(event, remainder) {
+  const multiplier = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 120 : 1;
+  // Chromium exposes wheelDelta in Windows wheel units (120 per notch),
+  // while deltaX/deltaY can be CSS pixels. Do not confuse those units.
+  const legacyY = Number.isFinite(event.wheelDeltaY) ? event.wheelDeltaY
+    : event.deltaX === 0 && Number.isFinite(event.wheelDelta) ? event.wheelDelta : null;
+  const values = {
+    x: Number.isFinite(event.wheelDeltaX) && (event.wheelDeltaX !== 0 || event.deltaX === 0)
+      ? -event.wheelDeltaX : event.deltaX * multiplier,
+    y: legacyY !== null && (legacyY !== 0 || event.deltaY === 0) ? legacyY : -event.deltaY * multiplier,
+  };
+  const result = {};
+  for (const axis of ["x", "y"]) {
+    const value = Number.isFinite(values[axis]) ? values[axis] : 0;
+    remainder[axis] = (remainder[axis] || 0) + Math.max(-1200, Math.min(1200, value));
+    result[axis === "x" ? "dx" : "dy"] = Math.trunc(remainder[axis]);
+    remainder[axis] -= Math.trunc(remainder[axis]);
+  }
+  return result;
+}
+
 video.addEventListener("wheel", event => {
   const session = inputSession();
   if (!session || document.activeElement !== video) return;
@@ -1131,9 +1152,9 @@ video.addEventListener("wheel", event => {
   const position = relative ? {} : point(event);
   if (!position) return;
   event.preventDefault();
-  const multiplier = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 120 : 1;
-  const wheelUnits = delta => Math.max(-1200, Math.min(1200, Math.round(delta * multiplier)));
-  send(session, { type: "wheel", dx: wheelUnits(event.deltaX), dy: wheelUnits(-event.deltaY), relative, ...position });
+  session.wheelRemainder ||= {x: 0, y: 0};
+  const delta = nativeWheelDelta(event, session.wheelRemainder);
+  if (delta.dx || delta.dy) send(session, {type: "wheel", ...delta, relative, ...position});
 }, { passive: false });
 
 document.addEventListener("keydown", event => {
