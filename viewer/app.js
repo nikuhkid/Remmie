@@ -30,6 +30,12 @@ const performanceCopy = document.querySelector("#performance-copy");
 const performanceSave = document.querySelector("#performance-save");
 const performanceLive = document.querySelector("#performance-live");
 const performanceSummary = document.querySelector("#performance-summary");
+const speedStart = document.querySelector("#speed-start");
+const speedCancel = document.querySelector("#speed-cancel");
+const speedCopy = document.querySelector("#speed-copy");
+const speedSummary = document.querySelector("#speed-summary");
+let lastSpeedResult = null;
+let speedGeneration = 0;
 const sessionMenu = document.querySelector("#session-menu");
 const menuToggle = document.querySelector("#session-toggle");
 const codecSelect = document.querySelector("#video-codec");
@@ -129,6 +135,15 @@ function desktopControls(session) {
   }
   document.querySelector("#file-download").disabled = !connected || !features.files || !session?.download || filesBusy;
   document.querySelector("#file-cancel").disabled = !session?.fileBusy || !!session?.fileCancelling;
+  speedStart.disabled = !connected || !features.speedTest || !session.speedToken || !!session.speedRun ||
+    filesBusy || !!session.pendingControl || !!session.probing || !!measurement || !!session.displayUnavailable;
+  speedCancel.disabled = !session?.speedRun;
+  if (session?.speedRun) {
+    for (const control of [profileSelect, codecSelect, resolutionSelect, fpsSelect, monitorSelect,
+      performanceStart, document.querySelector("#mode-reset"), document.querySelector("#input-probe"),
+      document.querySelector("#file-upload"), document.querySelector("#file-pick"), document.querySelector("#file-download")])
+      control.disabled = true;
+  }
 }
 
 function stopCapture(session) {
@@ -375,6 +390,8 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   clearInterval(session.clipboardTimer);
   clearInterval(session.pointerTimer);
   session.fileAbort?.abort();
+  session.speedRun?.abort.abort();
+  session.speedToken = "";
   session.fileToken = "";
   session.password = "";
   if (sent) {
@@ -609,7 +626,7 @@ function endMeasurement(reason) {
 }
 
 performanceStart.addEventListener("click", () => {
-  if (!active?.authorized || measurement) return;
+  if (!active?.authorized || measurement || active.speedRun) return;
   lastMeasurement = null;
   performanceCopy.disabled = performanceSave.disabled = true;
   active.performancePrevious = null;
@@ -798,6 +815,10 @@ async function connect(password, intent = null, previous = null) {
           ? `Fits within the selected size; no stretching or upscaling. Windows display mode stays the same.${message.videoLimits ? ` AV1 receiver limit: ${message.videoLimits.width}×${message.videoLimits.height}/${message.videoLimits.fps} FPS.` : ""}`
           : "This host needs the resolution update.";
         session.fileToken = session.features.files ? message.fileToken : null;
+        session.speedToken = session.features.speedTest ? message.speedToken : null;
+        if (!lastSpeedResult && !session.speedRun) speedSummary.textContent = session.speedToken
+          ? "Ready. Download: host → this device. Upload: this device → host."
+          : "This host does not support connection speed testing yet.";
         session.maxFPS = message.maxFPS || 60;
         for (const option of fpsSelect.options) option.disabled = Number(option.value) > session.maxFPS;
         if (message.videoCodec) document.querySelector("#codec-status").textContent =
@@ -1325,13 +1346,15 @@ fpsSelect.addEventListener("change", () => {
 });
 codecSelect.addEventListener("change", () => {
   const session = active;
-  if (!session?.authorized || !desired || session.handoverFrom || session.probing || session.fileBusy) return;
+  if (!session?.authorized || !desired || session.handoverFrom || session.probing || session.fileBusy || session.speedRun) return;
   selectedCodec = codecSelect.value;
   if (session.handoverToken) connect(desired.password, desired, session);
   else finish(session, "Applying the video codec.", "connecting", true, true);
 });
 
 function disposeSession(session) {
+  session.speedRun?.abort.abort();
+  session.speedToken = "";
   session.abort.abort();
   for (const key of ["connectTimer","controlTimer","disconnectTimer"]) clearTimeout(session[key]);
   for (const key of ["pingTimer","statsTimer","clipboardTimer","pointerTimer"]) clearInterval(session[key]);
@@ -1361,13 +1384,13 @@ receiverBuffer.addEventListener("change",()=>{
 });
 profileSelect.addEventListener("change",()=>{
   const session=active;
-  if (!session?.authorized || session.handoverFrom || session.fileBusy || session.probing) return;
+  if (!session?.authorized || session.handoverFrom || session.fileBusy || session.probing || session.speedRun) return;
   selectedProfile=profileSelect.value;
   if (session.features.profileDefaults && session.handoverToken) connect(desired.password,desired,session);
   else requestControl(session,{type:"video-settings",profile:selectedProfile});
 });
 document.querySelector("#mode-reset").addEventListener("click",()=>{
-  if (!active?.authorized || active.handoverFrom || active.fileBusy || active.probing) return;
+  if (!active?.authorized || active.handoverFrom || active.fileBusy || active.probing || active.speedRun) return;
   selectedCodec="auto";selectedFPS=null;receiverOverride=false;smoothingOverride=false;
   connect(desired.password,desired,active);
 });
@@ -1393,6 +1416,151 @@ function applyModeDetails(session, message) {
   document.querySelector("#audio-format").textContent=sound
     ? `${sound.codec} · ${sound.sample_rate/1000} kHz stereo · ${sound.bitrate_kbps} kbps · ${sound.packet_ms} ms · ${sound.application}` : "Playback audio is unavailable.";
 }
+
+function speedResultText(result) {
+  const lines = ["Remmie connection speed test"];
+  for (const [direction, label] of [["download", "Download · host → viewer"], ["upload", "Upload · viewer → host"]]) {
+    const phase = result[direction];
+    if (!phase) continue;
+    lines.push(`${label}: ${phase.mbps.toFixed(2)} Mbps · ${(phase.bytes / 1024**2).toFixed(2)} MiB in ${phase.seconds.toFixed(2)}s${phase.byteLimitReached ? " · data cap reached" : ""}`);
+  }
+  if (result.protocols?.length) lines.push(`HTTP protocol: ${result.protocols.join(", ")}`);
+  if (result.error) lines.push(`Incomplete: ${result.error}`);
+  lines.push("HTTP payload throughput to the configured host endpoint, with the stream still running.",
+    "Not maximum ISP speed, UDP capacity, video bitrate or input-to-screen latency.");
+  return lines.join("\n");
+}
+
+async function speedPhase(session, run, direction, payload) {
+  const headers = {Authorization: `Bearer ${session.speedToken}`};
+  const requestStarted = performance.now();
+  const control = new AbortController(), controlTimer = setTimeout(() => control.abort(), 3000);
+  let ticket;
+  try {
+    // Learn the test ID before honoring local cancellation so it can be stopped.
+    // A lost start response is still bounded by the host's independent watchdog.
+    ticket = await requestJSON(session.base, "speed-test/start", {method: "POST", headers: {...headers,
+      "Content-Type": "application/json"}, body: JSON.stringify({direction}), signal: control.signal});
+  } finally { clearTimeout(controlTimer); }
+  if (!/^[a-f0-9]{32}$/.test(ticket.id) || ticket.direction !== direction ||
+      !(ticket.duration_limit_seconds > 0 && ticket.duration_limit_seconds <= 10) ||
+      !Number.isSafeInteger(ticket.byte_limit) || !(ticket.byte_limit > 0 && ticket.byte_limit <= 256 * 1024**2) ||
+      !Number.isSafeInteger(ticket.block_bytes) || !(ticket.block_bytes > 0 && ticket.block_bytes <= 1024**2) ||
+      !Number.isInteger(ticket.streams) || !(ticket.streams > 0 && ticket.streams <= 4))
+    throw new Error("The host returned invalid speed-test limits.");
+  const url = new URL(`speed-test/${ticket.id}/${direction}`, session.base);
+  const transfer = new AbortController();
+  const abort = () => transfer.abort();
+  run.abort.signal.addEventListener("abort", abort, {once: true});
+  if (run.abort.signal.aborted) transfer.abort();
+  const started = performance.now();
+  const budgetMs = Math.max(1, ticket.duration_limit_seconds * 1000 - (started - requestStarted) - 75);
+  let stopped = null, received = 0, reserved = 0, failure = null;
+  const timer = setTimeout(() => { stopped = performance.now(); transfer.abort(); }, budgetMs);
+  speedSummary.textContent = `${direction === "download" ? "Download: host → this device" : "Upload: this device → host"}…`;
+  function protocol() {
+    const value = performance.getEntriesByName(url.href).at(-1)?.nextHopProtocol;
+    if (value && ["h2", "h3", "http/1.1", "http/1.0"].includes(value)) run.protocols.add(value);
+  }
+  async function worker() {
+    try {
+      while (!transfer.signal.aborted) {
+        if (active !== session || !session.authorized) throw new Error("The session changed during the test.");
+        let body;
+        if (direction === "upload") {
+          const amount = Math.min(ticket.block_bytes, ticket.byte_limit - reserved);
+          if (!amount) return;
+          reserved += amount;
+          body = payload.subarray(0, amount);
+        }
+        const response = await fetch(url, {method: direction === "download" ? "GET" : "POST",
+          headers: direction === "download" ? headers : {...headers, "Content-Type": "application/octet-stream"},
+          body, signal: transfer.signal, cache: "no-store", credentials: "omit", redirect: "error"});
+        if (response.status === 204) return;
+        if (!response.ok) {
+          const detail = await response.json().catch(() => null);
+          throw new Error(detail?.error || `Speed transfer failed (HTTP ${response.status}).`);
+        }
+        if (direction === "download") {
+          const reader = response.body.getReader();
+          try {
+            for (;;) {
+              const {done, value} = await reader.read();
+              if (done) break;
+              received += value.byteLength;
+              if (received > ticket.byte_limit) throw new Error("The host exceeded the test's byte limit.");
+            }
+          } finally { reader.releaseLock(); }
+        } else {
+          await response.json();
+        }
+        protocol();
+      }
+    } catch (error) {
+      if (!transfer.signal.aborted) { failure ||= error; transfer.abort(); }
+    }
+  }
+  let server;
+  try {
+    await Promise.all(Array.from({length: ticket.streams}, worker));
+  } finally {
+    stopped ??= performance.now();
+    clearTimeout(timer);
+    transfer.abort();
+    run.abort.signal.removeEventListener("abort", abort);
+    const cleanup = new AbortController(), cleanupTimer = setTimeout(() => cleanup.abort(), 3000);
+    try {
+      server = await requestJSON(session.base, `speed-test/${ticket.id}/finish`, {
+        method: "POST", headers, signal: cleanup.signal});
+    } catch (error) {
+      if (!run.abort.signal.aborted) throw error;
+    } finally { clearTimeout(cleanupTimer); }
+  }
+  if (run.abort.signal.aborted) throw new Error("Speed test cancelled.");
+  if (failure) throw failure;
+  const bytes = direction === "download" ? received : server.bytes;
+  const seconds = direction === "download" ? (stopped - started) / 1000 : server.elapsed_seconds;
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > ticket.byte_limit || !(seconds > 0))
+    throw new Error("The speed test returned invalid measurements.");
+  return {bytes, seconds, mbps: bytes * 8 / seconds / 1e6, byteLimitReached: server.reason === "byte-limit",
+    measurement: direction === "download" ? "Bytes read by the viewer / viewer elapsed time" : "Bytes read by the host / host elapsed time"};
+}
+
+speedStart.addEventListener("click", async () => {
+  const session = active;
+  if (!session?.authorized || !session.features.speedTest || !session.speedToken || speedStart.disabled) return;
+  const run = {abort: new AbortController(), protocols: new Set(), generation: ++speedGeneration};
+  const result = {startedUTC: new Date().toISOString(), streamContinued: true, protocols: []};
+  session.speedRun = run;
+  lastSpeedResult = null;
+  speedCopy.disabled = true;
+  desktopControls(session);
+  try {
+    const payload = new Uint8Array(1024**2);
+    for (let offset = 0; offset < payload.length; offset += 65536)
+      crypto.getRandomValues(payload.subarray(offset, offset + 65536));
+    result.download = await speedPhase(session, run, "download", payload);
+    if (run.abort.signal.aborted || active !== session) throw new Error("Speed test cancelled.");
+    result.upload = await speedPhase(session, run, "upload", payload);
+  } catch (error) {
+    result.error = error.message || "Speed test interrupted.";
+  } finally {
+    result.protocols = [...run.protocols];
+    if (run.generation === speedGeneration) {
+      lastSpeedResult = result;
+      speedSummary.textContent = speedResultText(result);
+      speedCopy.disabled = false;
+    }
+    if (session.speedRun === run) session.speedRun = null;
+    desktopControls(active);
+  }
+});
+speedCancel.addEventListener("click", () => active?.speedRun?.abort.abort());
+speedCopy.addEventListener("click", async () => {
+  if (!lastSpeedResult) return;
+  try { await navigator.clipboard.writeText(speedResultText(lastSpeedResult)); }
+  catch { speedSummary.focus(); }
+});
 
 let inputProbeResult=null;
 document.querySelector("#input-probe").addEventListener("click",()=>{
@@ -1575,7 +1743,7 @@ function fileOptions(session, extra = {}) {
 }
 async function fileOperation(action) {
   const session = active;
-  if (!session?.authorized || !session.features.files || session.fileBusy || session.fileCancelling) return;
+  if (!session?.authorized || !session.features.files || session.fileBusy || session.fileCancelling || session.speedRun) return;
   session.fileBusy = true;
   session.fileAbort = new AbortController();
   const progress = document.querySelector("#file-progress");

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer"><title>Connect</title>
-  <link rel="stylesheet" href="./style.css?v=wheel-native-units-1">
-  <script type="module" src="./app.js?v=wheel-native-units-1"></script>
+  <link rel="stylesheet" href="./style.css?v=direct-speed-test-1">
+  <script type="module" src="./app.js?v=direct-speed-test-1"></script>
 </head>
 <body>
   <header id="connection-card">
@@ -115,6 +115,14 @@
       <p id="input-probe-status" class="help">Temporarily shows a small test square on the host and sends F13 to that test. No text is entered and focus stays where it is.</p>
       <pre id="performance-summary" tabindex="0"></pre>
       <p class="help">Includes video payload rate, frame delivery, packet loss, decode time and buffering. Network RTT is not input-to-screen delay. Reports stay in this page until you copy or save them.</p>
+      <h3>Connection speed</h3>
+      <p class="help">Transfers dummy data between this device and the host endpoint. Up to 10 seconds and 256 MiB per direction. Uses available bandwidth and may briefly disrupt the stream. The stream keeps running; this is throughput under current load, not the video bitrate or a UDP capacity test.</p>
+      <div class="toolbar">
+        <button id="speed-start" type="button" disabled>Test download and upload</button>
+        <button id="speed-cancel" type="button" disabled>Cancel speed test</button>
+        <button id="speed-copy" type="button" disabled>Copy speed result</button>
+      </div>
+      <pre id="speed-summary" tabindex="0" role="status">Connect to a compatible host to test speed.</pre>
     </details>
 
       <p id="control-status" role="status"></p>
