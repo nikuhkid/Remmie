@@ -392,8 +392,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   clearTimeout(session.disconnectTimer);
   clearInterval(session.clipboardTimer);
   clearInterval(session.pointerTimer);
-  clearTimeout(session.mobileText?.timer);
-  session.mobileText = null;
+  mobileUI?.sessionEnded(session);
   session.fileAbort?.abort();
   session.speedRun?.abort.abort();
   session.speedToken = "";
@@ -881,7 +880,7 @@ async function connect(password, intent = null, previous = null) {
         session.hostTimings = message.timings || null;
       } else if (message?.type === "permissions" && session.authorized) {
         const p=message.permissions;
-        if (!p.keyboard || !p.clipboard) mobileUI?.textFailed(session, "Permissions changed. Check the host before sending text again.");
+        if (!p.keyboard) mobileUI?.keyboard.stop(true);
         releaseInput(session);
         session.canInput=!!(p.keyboard || p.mouse);
         session.permissions=p;
@@ -925,10 +924,11 @@ async function connect(password, intent = null, previous = null) {
           session.clip.remote = {text: message.text};
           syncClipboard(session);
         }
+      } else if (message?.type === "text-result" && session.authorized) {
+        mobileUI?.keyboard.result(session, message);
       } else if (message?.type === "clipboard-synced" && session.authorized && session.clip) {
         session.clip.last = message.text;
         session.clip.pending = null;
-        mobileUI?.textAcknowledged(session, message.text);
       } else if (message?.type === "clipboard-text" && session.authorized) {
         clipboardText.value = message.text;
         completeControl(session);
@@ -937,7 +937,6 @@ async function connect(password, intent = null, previous = null) {
         completeControl(session);
         controlStatus.textContent = "The remote clipboard was updated.";
       } else if (message?.type === "control-error" && session.authorized) {
-        if (message.operation === "clipboard-sync") mobileUI?.textFailed(session, message.message);
         if (message.operation==="probe-start") { session.probing=false;document.querySelector("#input-probe-status").textContent=message.message; }
         if (message.operation === "clipboard-sync") {
           if (session.clip) session.clip.pending = null;
@@ -1217,7 +1216,7 @@ video.addEventListener("keyup", event => {
   send(session, { type: "key", code: event.code, pressed: false });
 });
 
-video.addEventListener("blur", () => stopCapture(active));
+video.addEventListener("blur", event => { if (event.relatedTarget?.id !== "mobile-input-proxy") stopCapture(active); });
 window.addEventListener("blur", () => stopCapture(active));
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopCapture(active);
@@ -1880,10 +1879,188 @@ document.querySelector("#file-cancel").addEventListener("click", () => {
     .finally(() => { session.fileCancelling = false; if (active === session) desktopControls(session); });
 });
 
+// Local zoom is independent of stream resolution and host input coordinates.
+class MobileViewport {
+  constructor(changed = () => {}) { this.changed = changed; this.zoom = 1; this.x = this.y = 0; this.geometry = null; }
+  update(geometry) {
+    const previous = this.geometry;
+    const center = previous ? this.point(previous.width / 2, previous.height / 2) : null;
+    this.geometry = geometry;
+    if (center) {
+      this.x = geometry.width / 2 - (geometry.left + center.x * geometry.contentWidth) * this.zoom;
+      this.y = geometry.height / 2 - (geometry.top + center.y * geometry.contentHeight) * this.zoom;
+    }
+    this.clamp();
+  }
+  point(x, y) {
+    const g = this.geometry;
+    return g ? {x: (x - this.x - g.left * this.zoom) / (g.contentWidth * this.zoom || 1),
+      y: (y - this.y - g.top * this.zoom) / (g.contentHeight * this.zoom || 1)} : {x: .5, y: .5};
+  }
+  clamp() {
+    const g = this.geometry;
+    if (!g) return;
+    for (const [position, start, size, view] of [['x','left','contentWidth','width'], ['y','top','contentHeight','height']]) {
+      const extent = g[size] * this.zoom;
+      this[position] = extent <= g[view] ? (g[view] - extent) / 2 - g[start] * this.zoom
+        : Math.max(g[view] - (g[start] + g[size]) * this.zoom, Math.min(-g[start] * this.zoom, this[position]));
+    }
+    this.changed();
+  }
+  pinch(factor, previous, next) {
+    if (!this.geometry || !Number.isFinite(factor) || factor <= 0) return;
+    const anchor = this.point(previous.x, previous.y), g = this.geometry;
+    this.zoom = Math.max(1, Math.min(8, this.zoom * factor));
+    this.x = next.x - (g.left + anchor.x * g.contentWidth) * this.zoom;
+    this.y = next.y - (g.top + anchor.y * g.contentHeight) * this.zoom;
+    this.clamp();
+  }
+  pan(dx, dy) { this.x += dx; this.y += dy; this.clamp(); }
+  reset() { this.zoom = 1; this.x = this.y = 0; this.clamp(); }
+  reveal(point) {
+    if (!this.geometry) return;
+    const g = this.geometry;
+    for (const [position, start, size, view, coordinate] of [['x','left','contentWidth','width','x'], ['y','top','contentHeight','height','y']]) {
+      const pixel = this[position] + (g[start] + point[coordinate] * g[size]) * this.zoom;
+      if (pixel < 18) this[position] += 18 - pixel;
+      if (pixel > g[view] - 18) this[position] -= pixel - (g[view] - 18);
+    }
+    this.clamp();
+  }
+}
+
+function textGraphemes(value) {
+  return globalThis.Intl?.Segmenter ? [...new Intl.Segmenter(undefined, {granularity:'grapheme'}).segment(value)].map(s => s.segment) : Array.from(value);
+}
+function nativeTextDelta(previous, next) {
+  const before = textGraphemes(previous), after = textGraphemes(next);
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
+  return {erase: before.length - prefix, text: after.slice(prefix).join('')};
+}
+function nativeTextChunks(erase, text, keys = []) {
+  if (!Number.isInteger(erase) || erase < 0 || erase > 4096 || text.length > 8192) throw new Error('Typing edit is too large.');
+  if (keys.length) return [{text:'', erase:0, keys}];
+  const chunks = [];
+  while (erase > 32) { chunks.push({text:'',erase:32,keys:[]}); erase -= 32; }
+  let current = '';
+  for (const character of text) {
+    const cp = character.codePointAt(0);
+    if (cp >= 0xD800 && cp <= 0xDFFF) throw new Error('Incomplete Unicode input.');
+    if (current.length + character.length > 64) { chunks.push({text:current,erase,keys:[]}); erase = 0; current = ''; }
+    current += character;
+  }
+  if (current || erase) chunks.push({text:current,erase,keys:[]});
+  return chunks;
+}
+
+class DirectKeyboard {
+  constructor({field, current, emit, status, changed = () => {}}) {
+    Object.assign(this, {field, current, emit, status, changed});
+    this.anchor = '\u200B'; this.context = ''; this.pending = new Map(); this.active = false;
+    field.value = this.anchor;
+    field.addEventListener('input', event => this.input(event));
+    field.addEventListener('beforeinput', event => this.beforeInput(event));
+    field.addEventListener('keydown', event => this.keydown(event));
+    field.addEventListener('compositionstart', () => { this.composing = true; });
+    field.addEventListener('compositionend', () => { this.composing = false; this.input({inputType:'insertCompositionText'}); });
+    field.addEventListener('blur', () => { if (this.active) this.stop(); });
+  }
+  start() {
+    const session = this.current();
+    if (!session?.features?.directText || session.permissions?.keyboard === false) {
+      this.status('Direct typing requires the updated host. Key buttons and manual clipboard transfer remain available.', true); return false;
+    }
+    if (this.session !== session) this.cancelPending();
+    this.session = session; this.active = true; this.resetContext();
+    this.field.focus({preventScroll:true});
+    this.field.setSelectionRange(this.field.value.length, this.field.value.length);
+    this.changed(); return true;
+  }
+  resetContext() { this.context = ''; this.composing = false; this.field.value = this.anchor; }
+  stop(hard = false) {
+    this.active = false; this.resetContext(); this.field.blur();
+    if (hard) this.cancelPending();
+    this.changed();
+  }
+  cancelPending() { for (const item of this.pending.values()) clearTimeout(item.timer); this.pending.clear(); }
+  sendEdit(erase, text, keys = []) {
+    const session = this.current();
+    if (!session || session !== this.session || session.permissions?.keyboard === false || !session.features?.directText) throw new Error('Direct typing is unavailable.');
+    const chunks = nativeTextChunks(erase, text, keys);
+    if (this.pending.size + chunks.length > 32 || session.channel.bufferedAmount > 16384) throw new Error('Typing backlog exceeded. Unsent input was stopped, not replayed.');
+    for (const edit of chunks) {
+      const id = session.nextTextInputId = (session.nextTextInputId || 0) + 1;
+      const timer = setTimeout(() => {
+        this.stop(true); this.status('Typing confirmation timed out. Some input may already have arrived; tap Keyboard to resume.', true);
+      }, 3000);
+      this.pending.set(id, {session,timer});
+      if (!this.emit(session, {type:'text-input',id,...edit})) { clearTimeout(timer); this.pending.delete(id); throw new Error('Connection closed before text could be sent.'); }
+    }
+  }
+  input(event) {
+    if (!this.active) return;
+    try {
+      let value = this.field.value;
+      if (!value.startsWith(this.anchor)) {
+        if (event.inputType?.startsWith('delete') && !value) { this.sendEdit(1,''); this.resetContext(); return; }
+      } else value = value.slice(this.anchor.length);
+      if (value.length > 4096) throw new Error('Typing context exceeded its limit.');
+      const edit = nativeTextDelta(this.context, value);
+      this.sendEdit(edit.erase, edit.text);
+      this.context = value;
+      if (!this.composing) {
+        this.context = textGraphemes(value).slice(-128).join('');
+        if (this.field.value !== this.anchor + this.context) {
+          this.field.value = this.anchor + this.context;
+          this.field.setSelectionRange(this.field.value.length, this.field.value.length);
+        }
+      }
+    } catch (error) {
+      if (this.composing && error.message === 'Incomplete Unicode input.') return;
+      this.stop(true); this.status(error.message, true);
+    }
+  }
+  beforeInput(event) {
+    if (!this.active || event.isComposing) return;
+    const empty = !this.field.value.slice(this.field.value.startsWith(this.anchor) ? 1 : 0);
+    const key = event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph' ? 'Enter'
+      : event.inputType === 'deleteContentForward' ? 'Delete' : null;
+    if ((key || (empty && event.inputType === 'deleteContentBackward')) && event.cancelable) {
+      event.preventDefault(); this.key(key || 'Backspace');
+    }
+  }
+  key(code, modifiers = []) {
+    try {
+      this.sendEdit(code === 'Backspace' && !modifiers.length ? 1 : 0, '', code === 'Backspace' && !modifiers.length ? [] : [...modifiers,code]);
+      if (code === 'Backspace' && !modifiers.length) {
+        this.context = textGraphemes(this.context).slice(0,-1).join(''); this.field.value = this.anchor + this.context;
+      } else this.resetContext();
+    } catch (error) { this.stop(true); this.status(error.message,true); }
+  }
+  keydown(event) {
+    if (!this.active || event.isComposing || !event.code || event.keyCode === 229) return;
+    const special = ['Enter','Backspace','Delete','Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'];
+    if (!special.includes(event.code) && !event.ctrlKey && !event.altKey && !event.metaKey) return;
+    if (['ControlLeft','ControlRight','AltLeft','AltRight','MetaLeft','MetaRight','ShiftLeft','ShiftRight'].includes(event.code)) return;
+    event.preventDefault(); event.stopPropagation();
+    const modifiers = [event.ctrlKey && 'ControlLeft',event.altKey && 'AltLeft',event.shiftKey && 'ShiftLeft',event.metaKey && 'MetaLeft'].filter(Boolean);
+    this.key(event.code,modifiers);
+  }
+  result(session, message) {
+    const item = this.pending.get(message.id);
+    if (!item || item.session !== session) return;
+    clearTimeout(item.timer); this.pending.delete(message.id);
+    if (!message.ok) { this.stop(true); this.status(message.message || 'The host refused that text edit.',true); }
+  }
+}
+
 // Touch gestures use existing normalized mouse messages; no pointer lock needed.
 class TouchController {
-  constructor({current, emit, locate, extent, changed, later = (fn, ms) => globalThis.setTimeout(fn, ms), cancel = id => globalThis.clearTimeout(id), now = () => performance.now()}) {
-    Object.assign(this, {current, emit, locate, extent, changed, later, cancel, now});
+  constructor({current, emit, locate, extent, changed, pan = () => {}, pinch = () => {},
+    frame = fn => globalThis.requestAnimationFrame(fn), cancelFrame = id => globalThis.cancelAnimationFrame(id),
+    later = (fn, ms) => globalThis.setTimeout(fn, ms), cancel = id => globalThis.clearTimeout(id), now = () => performance.now()}) {
+    Object.assign(this, {current, emit, locate, extent, changed, pan, pinch, frame, cancelFrame, later, cancel, now});
     this.mode = "trackpad";
     this.cursor = {x: .5, y: .5};
     this.points = new Map();
@@ -1891,13 +2068,15 @@ class TouchController {
   }
   reset(release = true) {
     this.cancel(this.holdTimer);
+    this.cancelFrame(this.multiFrame); this.multiFrame = 0;
     if (release && this.dragSession) this.emit(this.dragSession, {type: "button", button: 0, pressed: false, ...this.cursor});
     this.holdTimer = null;
     this.dragSession = null;
     this.sticky = this.held = false;
     this.points.clear();
     this.session = null;
-    this.multi = this.moved = this.suppressed = false;
+    this.multi = this.moved = this.suppressed = this.longPressed = false;
+    this.dual = this.initialDual = this.action = null;
     this.wheel = {x: 0, y: 0};
     this.changed?.();
   }
@@ -1931,8 +2110,10 @@ class TouchController {
     if (!this.points.size) {
       this.session = session;
       this.started = this.now();
-      this.multi = this.moved = this.suppressed = false;
+      this.multi = this.moved = this.suppressed = this.longPressed = false;
       this.consumed = this.held;
+      this.dual = this.initialDual = this.action = null;
+      this.wheel = {x:0,y:0};
       if (this.mode === "direct") this.cursor = position;
     } else if (this.session !== session) { this.reset(); return false; }
     this.points.set(event.pointerId, {x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY});
@@ -1940,12 +2121,10 @@ class TouchController {
     if (this.points.size === 1 && !this.held) {
       this.holdTimer = this.later(() => {
         if (this.points.size !== 1 || this.moved || this.current() !== this.session) return;
-        this.emit(session, {type: "move", ...this.cursor});
-        this.emit(session, {type: "button", button: 0, pressed: true, ...this.cursor});
-        this.dragSession = session;
-        this.held = this.consumed = true;
+        this.click(2, session);
+        this.longPressed = this.consumed = true;
         this.changed?.();
-      }, 400);
+      }, 500);
     } else if (this.points.size >= 2) {
       if (this.held) {
         this.emit(this.dragSession, {type: "button", button: 0, pressed: false, ...this.cursor});
@@ -1954,7 +2133,11 @@ class TouchController {
       }
       this.multi = true;
       this.suppressed ||= this.points.size > 2;
-      this.centroid = this.center();
+      this.dual = this.initialDual = this.measureDual(); this.action = null;
+      if (this.mode === 'direct') {
+        const center = this.dual.center;
+        this.cursor = this.locate({clientX:center.x,clientY:center.y},true) || this.cursor;
+      }
     }
     this.changed?.();
     return true;
@@ -1963,6 +2146,34 @@ class TouchController {
     const points = [...this.points.values()];
     return {x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
       y: points.reduce((sum, p) => sum + p.y, 0) / points.length};
+  }
+  measureDual() {
+    const [a,b] = [...this.points.values()];
+    return {center:this.center(),span:Math.hypot(a.x-b.x,a.y-b.y)};
+  }
+  flushMulti() {
+    this.cancelFrame(this.multiFrame); this.multiFrame = 0;
+    if (this.points.size !== 2 || this.suppressed || !this.dual || this.current() !== this.session) return;
+    const next = this.measureDual(), previous = this.dual;
+    const pinch = Math.abs(next.span - this.initialDual.span) >= Math.max(14, this.initialDual.span * .12);
+    let from = previous;
+    if (pinch && this.action !== 'zoom') {
+      if (!this.action) from = this.initialDual;
+      this.action = 'zoom'; this.consumed = true;
+    } else if (!this.action && Math.hypot(next.center.x-this.initialDual.center.x,next.center.y-this.initialDual.center.y) >= 6) {
+      this.action = this.mode === 'direct' ? 'pan' : 'scroll';
+      from = this.initialDual; this.consumed = true;
+    }
+    if (this.action === 'zoom') this.pinch(next.span / Math.max(1,from.span),from.center,next.center);
+    else if (this.action === 'pan') this.pan(next.center.x-from.center.x,next.center.y-from.center.y);
+    else if (this.action === 'scroll') this.scroll(next.center.x-from.center.x,next.center.y-from.center.y);
+    this.dual = next; this.changed?.();
+  }
+  scroll(dx, dy) {
+    this.wheel.x += -dx*3; this.wheel.y += dy*3;
+    const x = Math.trunc(this.wheel.x), y = Math.trunc(this.wheel.y);
+    this.wheel.x -= x; this.wheel.y -= y;
+    if (x || y) this.emit(this.session,{type:'wheel',dx:Math.max(-1200,Math.min(1200,x)),dy:Math.max(-1200,Math.min(1200,y)),...this.cursor});
   }
   move(event) {
     const point = this.points.get(event.pointerId);
@@ -1977,22 +2188,25 @@ class TouchController {
     if (this.suppressed) return;
     if (this.multi) {
       if (this.points.size !== 2) return;
-      const next = this.center();
-      this.wheel.x += -(next.x - this.centroid.x) * 3;
-      this.wheel.y += (next.y - this.centroid.y) * 3;
-      this.centroid = next;
-      const x = Math.trunc(this.wheel.x), y = Math.trunc(this.wheel.y);
-      this.wheel.x -= x; this.wheel.y -= y;
-      if (x || y) this.emit(this.session, {type: "wheel", dx: Math.max(-1200, Math.min(1200, x)),
-        dy: Math.max(-1200, Math.min(1200, y)), ...this.cursor});
+      this.multiFrame ||= this.frame(() => this.flushMulti());
     } else {
-      if (this.mode === "direct") this.cursor = this.locate(event, true) || this.cursor;
-      else {
-        const box = this.extent();
-        this.cursor = {x: Math.max(0, Math.min(1, this.cursor.x + dx / Math.max(1, box.width))),
-          y: Math.max(0, Math.min(1, this.cursor.y + dy / Math.max(1, box.height)))};
+      if (this.longPressed) return;
+      if (this.mode === 'direct' && !this.held) {
+        if (!this.moved) return;
+        // Keep scrolling over the initially touched remote target, not wherever
+        // the swiping finger ends. No click is sent while deciding tap/scroll.
+        const first = this.action !== 'scroll';
+        this.action = 'scroll'; this.consumed = true;
+        this.scroll(first ? point.x-point.startX : dx,first ? point.y-point.startY : dy);
+      } else {
+        if (this.mode === 'direct') this.cursor = this.locate(event,true) || this.cursor;
+        else {
+          const box = this.extent();
+          this.cursor = {x: Math.max(0, Math.min(1, this.cursor.x + dx / Math.max(1, box.width))),
+            y: Math.max(0, Math.min(1, this.cursor.y + dy / Math.max(1, box.height)))};
+        }
+        this.emit(this.session, {type: 'move', ...this.cursor});
       }
-      this.emit(this.session, {type: "move", ...this.cursor});
     }
     this.changed?.();
   }
@@ -2000,6 +2214,7 @@ class TouchController {
     if (!this.points.has(event.pointerId)) return;
     // Include the final position even when the browser omitted a last move.
     this.move(event);
+    if (this.multi) this.flushMulti();
     this.cancel(this.holdTimer);
     this.points.delete(event.pointerId);
     if (this.points.size) return;
@@ -2018,180 +2233,188 @@ class TouchController {
 }
 // End touch gesture state machine.
 
-function mobileTextPayload(text) {
-  if (!text || new TextEncoder().encode(text).length > 8192 || text.includes("\0"))
-    throw new Error("Enter text up to 8 KiB, without null characters.");
-  return {type: "clipboard-sync", text, paste: true};
-}
-
 class MobileControls {
   constructor() {
-    this.toolbar = document.querySelector("#mobile-toolbar");
-    this.panel = document.querySelector("#mobile-keyboard");
-    this.field = document.querySelector("#mobile-text");
-    this.textStatus = document.querySelector("#mobile-text-status");
-    this.cursor = document.querySelector("#touch-cursor");
-    this.enabled = document.querySelector("#touch-controls-enabled");
-    this.enabled.checked = !!globalThis.matchMedia?.("(pointer: coarse)")?.matches;
+    this.toolbar = document.querySelector('#mobile-toolbar');
+    this.panel = document.querySelector('#mobile-keyboard');
+    this.field = document.querySelector('#mobile-input-proxy');
+    this.textStatus = document.querySelector('#mobile-text-status');
+    this.cursor = document.querySelector('#touch-cursor');
+    this.enabled = document.querySelector('#touch-controls-enabled');
+    this.enabled.checked = !!globalThis.matchMedia?.('(pointer: coarse)')?.matches;
     this.modifiers = new Set();
-    this.gestures = new TouchController({current: () => {
-      const session = inputSession();
-      return session?.permissions?.mouse !== false ? session : null;
-    }, emit: (session, message) => this.emit(session, message), locate: point,
-    extent: () => this.displayRect(), changed: () => this.paint()});
-    this.enabled.addEventListener("change", () => { stopCapture(active); desktopControls(active); });
-    document.querySelector("#touch-mode").addEventListener("change", event => this.gestures.setMode(event.target.value));
-    document.querySelector("#touch-drag").addEventListener("click", () => this.gestures.toggleDrag());
-    document.querySelector("#touch-right-click").addEventListener("click", () => { this.gestures.reset(); this.gestures.click(2); });
-    document.querySelector("#mobile-keyboard-toggle").addEventListener("click", () => this.showKeyboard(this.panel.hidden));
-    document.querySelector("#mobile-keyboard-close").addEventListener("click", () => this.showKeyboard(false));
-    document.querySelector("#mobile-text-send").addEventListener("click", () => this.sendText());
-    for (const button of document.querySelectorAll("[data-mobile-key]")) button.addEventListener("click", () => this.key(button.dataset.mobileKey));
-    for (const button of document.querySelectorAll("[data-mobile-mod]")) button.addEventListener("click", () => {
+    this.viewport = new MobileViewport(() => this.renderView());
+    this.keyboard = new DirectKeyboard({field:this.field,current:inputSession,
+      emit:(session,message) => inputSession() === session && send(session,message),
+      status:(message,error) => this.typingStatus(message,error),changed:() => this.paint()});
+    this.gestures = new TouchController({current:() => {
+      const session = inputSession(); return session?.permissions?.mouse !== false ? session : null;
+    },emit:(session,message) => this.emit(session,message),locate:point,extent:() => this.displayRect(),
+      changed:() => this.paint(),
+      pan:(dx,dy) => this.viewport.pan(dx,dy),pinch:(factor,previous,next) => {
+        const box = document.querySelector('.screen').getBoundingClientRect();
+        this.viewport.pinch(factor,{x:previous.x-box.left,y:previous.y-box.top},{x:next.x-box.left,y:next.y-box.top});
+      }});
+    this.enabled.addEventListener('change',() => { stopCapture(active); desktopControls(active); });
+    document.querySelector('#touch-mode').addEventListener('change',event => this.gestures.setMode(event.target.value));
+    document.querySelector('#touch-drag').addEventListener('click',() => this.gestures.toggleDrag());
+    document.querySelector('#mobile-keyboard-toggle').addEventListener('click',() => this.showNativeKeyboard());
+    document.querySelector('#mobile-keys-toggle').addEventListener('click',() => this.showKeys(this.panel.hidden));
+    document.querySelector('#mobile-keyboard-close').addEventListener('click',() => this.showKeys(false));
+    document.querySelector('#mobile-zoom-reset').addEventListener('click',() => { this.gestures.reset(); this.viewport.reset(); });
+    for (const button of document.querySelectorAll('[data-mobile-key]')) button.addEventListener('click',() => this.key(button.dataset.mobileKey));
+    for (const button of document.querySelectorAll('[data-mobile-mod]')) button.addEventListener('click',() => {
       const key = button.dataset.mobileMod;
-      this.modifiers.has(key) ? this.modifiers.delete(key) : this.modifiers.add(key);
-      this.paint();
+      this.modifiers.has(key) ? this.modifiers.delete(key) : this.modifiers.add(key); this.paint();
     });
-    // Keep toolbar taps from blurring the video and undoing a drag toggle.
-    for (const button of document.querySelectorAll("#mobile-toolbar button, #mobile-keyboard button"))
-      button.addEventListener("pointerdown", event => event.preventDefault());
-    video.addEventListener("pointerdown", event => {
-      if (event.pointerType !== "touch" || !this.enabled.checked) return;
+    for (const button of document.querySelectorAll('#mobile-toolbar button, #mobile-keyboard button, #mobile-zoom-reset'))
+      button.addEventListener('pointerdown',event => event.preventDefault());
+    video.addEventListener('pointerdown',event => {
+      if (event.pointerType !== 'touch' || !this.enabled.checked) return;
       if (this.gestures.down(event)) {
-        event.preventDefault(); video.focus({preventScroll: true}); video.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        if (!this.keyboard.active) video.focus({preventScroll:true});
+        video.setPointerCapture(event.pointerId);
       }
     });
-    video.addEventListener("pointermove", event => { if (event.pointerType === "touch") this.gestures.move(event); });
-    video.addEventListener("pointerup", event => { if (event.pointerType === "touch") this.gestures.up(event); });
-    video.addEventListener("lostpointercapture", event => {
-      if (event.pointerType === "touch" && this.gestures.points.has(event.pointerId)) stopCapture(active);
+    video.addEventListener('pointermove',event => { if (event.pointerType === 'touch') this.gestures.move(event); });
+    video.addEventListener('pointerup',event => { if (event.pointerType === 'touch') this.gestures.up(event); });
+    video.addEventListener('lostpointercapture',event => {
+      if (event.pointerType === 'touch' && this.gestures.points.has(event.pointerId)) stopCapture(active);
     });
-    window.addEventListener("resize", () => { if (this.enabled.checked) stopCapture(active); this.layout(); });
-    globalThis.visualViewport?.addEventListener("resize", () => this.layout());
-    globalThis.visualViewport?.addEventListener("scroll", () => this.layout());
+    window.addEventListener('resize',() => { if (this.enabled.checked) this.gestures.reset(); this.layout(); });
+    globalThis.visualViewport?.addEventListener('resize',() => this.layout());
+    globalThis.visualViewport?.addEventListener('scroll',() => this.layout());
+    video.addEventListener('resize',() => this.layout());
     this.observer = new ResizeObserver(() => this.layout());
     this.observer.observe(this.toolbar); this.observer.observe(this.panel);
     this.layout();
   }
   displayRect() {
     const box = video.getBoundingClientRect();
-    const scale = Math.min(box.width / (video.videoWidth || 1), box.height / (video.videoHeight || 1));
-    const width = video.videoWidth * scale, height = video.videoHeight * scale;
-    return {width, height, left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2};
+    const scale = Math.min(box.width/(video.videoWidth||1),box.height/(video.videoHeight||1));
+    const width = video.videoWidth*scale,height = video.videoHeight*scale;
+    return {width,height,left:box.left+(box.width-width)/2,top:box.top+(box.height-height)/2};
   }
-  emit(session, message) {
+  emit(session,message) {
     if (inputSession() !== session || session.permissions?.mouse === false) return;
-    if (message.type === "button") {
+    if (message.type === 'button') {
       this.flush();
+      if (message.pressed && this.keyboard.active) this.keyboard.resetContext();
       message.pressed ? session.buttons.add(message.button) : session.buttons.delete(message.button);
-      send(session, message); return;
+      send(session,message); return;
     }
-    if (message.type === "move") this.motion = {session, message};
-    else if (message.type === "wheel") {
-      this.scroll ||= {session, message: {...message, dx: 0, dy: 0}};
-      this.scroll.message.dx = Math.max(-1200, Math.min(1200, this.scroll.message.dx + message.dx));
-      this.scroll.message.dy = Math.max(-1200, Math.min(1200, this.scroll.message.dy + message.dy));
+    if (message.type === 'move') {
+      if (this.gestures.mode === 'trackpad') this.viewport.reveal(message);
+      this.motion = {session,message};
+    } else if (message.type === 'wheel') {
+      this.scroll ||= {session,message:{...message,dx:0,dy:0}};
+      this.scroll.message.dx = Math.max(-1200,Math.min(1200,this.scroll.message.dx+message.dx));
+      this.scroll.message.dy = Math.max(-1200,Math.min(1200,this.scroll.message.dy+message.dy));
     }
     this.frame ||= requestAnimationFrame(() => this.flush());
   }
   flush() {
     cancelAnimationFrame(this.frame); this.frame = 0;
-    for (const pending of [this.motion, this.scroll])
-      if (pending && inputSession() === pending.session && pending.session.channel.bufferedAmount < 16384)
-        send(pending.session, pending.message);
+    for (const pending of [this.motion,this.scroll])
+      if (pending && inputSession() === pending.session && pending.session.channel.bufferedAmount < 16384) send(pending.session,pending.message);
     this.motion = this.scroll = null;
   }
   release() {
-    cancelAnimationFrame(this.frame); this.frame = 0;
-    this.motion = this.scroll = null;
-    this.gestures.reset(false);
-    this.modifiers.clear(); this.paint();
+    cancelAnimationFrame(this.frame); this.frame = 0; this.motion = this.scroll = null;
+    this.gestures.reset(false); this.keyboard.stop(); this.modifiers.clear(); this.paint();
   }
-  refresh(session, connected, available) {
+  sessionEnded(session) { if (this.keyboard.session === session) this.keyboard.stop(true); }
+  refresh(session,connected,available) {
     const visible = !!connected && this.enabled.checked;
-    this.toolbar.hidden = !visible;
-    document.body.classList.toggle("mobile-session", visible);
+    this.toolbar.hidden = !visible; document.body.classList.toggle('mobile-session',visible);
     if (!visible) {
-      this.panel.hidden = true; this.field.blur();
-      document.querySelector("#mobile-keyboard-toggle").setAttribute("aria-expanded", "false");
+      this.panel.hidden = true; document.querySelector('#mobile-keys-toggle').setAttribute('aria-expanded','false');
       if (this.gestures.dragSession) releaseInput(this.gestures.dragSession); else this.release();
+      this.viewport.reset();
     }
     const mouse = visible && available && session?.permissions?.mouse !== false;
     if (!mouse && this.gestures.dragSession) releaseInput(this.gestures.dragSession);
-    for (const id of ["touch-mode", "touch-right-click", "touch-drag"]) document.querySelector(`#${id}`).disabled = !mouse;
+    for (const id of ['touch-mode','touch-drag']) document.querySelector(`#${id}`).disabled = !mouse;
     const keyboard = visible && available && session?.permissions?.keyboard !== false;
-    for (const button of document.querySelectorAll("[data-mobile-key], [data-mobile-mod], #mobile-keyboard-toggle")) button.disabled = !keyboard;
-    document.querySelector("#mobile-text-send").disabled = !keyboard || !session?.features?.clipboardSync ||
-      session?.permissions?.clipboard === false || !!session?.pendingControl || !!session?.mobileText;
-    if (session?.mobileText) clipboardSend.disabled = clipboardGet.disabled = true;
+    for (const button of document.querySelectorAll('[data-mobile-key], [data-mobile-mod], #mobile-keys-toggle')) button.disabled = !keyboard;
+    const native = keyboard && session?.features?.directText;
+    document.querySelector('#mobile-keyboard-toggle').disabled = !native;
+    document.querySelector('#mobile-keyboard-toggle').title = native ? 'Type into the focused remote application' : 'Update the host to enable native direct typing';
+    this.field.disabled = !native;
+    if (!native) this.keyboard.stop(true);
     this.layout();
   }
   layout() {
     const viewport = globalThis.visualViewport;
     if (!viewport || viewport.scale === 1) {
-      workspace.style.setProperty("--viewport-height", `${viewport?.height || window.innerHeight}px`);
-      workspace.style.setProperty("--viewport-top", `${viewport?.offsetTop || 0}px`);
+      workspace.style.setProperty('--viewport-height',`${viewport?.height || window.innerHeight}px`);
+      workspace.style.setProperty('--viewport-top',`${viewport?.offsetTop || 0}px`);
     }
     const bar = this.toolbar.hidden ? 0 : this.toolbar.getBoundingClientRect().height;
-    workspace.style.setProperty("--mobile-bar-height", `${bar}px`);
-    workspace.style.setProperty("--mobile-reserved", `${bar + (this.panel.hidden ? 0 : this.panel.getBoundingClientRect().height)}px`);
+    workspace.style.setProperty('--mobile-bar-height',`${bar}px`);
+    workspace.style.setProperty('--mobile-reserved',`${bar+(this.panel.hidden?0:this.panel.getBoundingClientRect().height)}px`);
+    const screen = document.querySelector('.screen');
+    const scale = getComputedStyle(video).objectFit === 'none' ? 1 : Math.min(video.clientWidth/(video.videoWidth||1),video.clientHeight/(video.videoHeight||1));
+    const width = Math.max(1,video.videoWidth*scale),height = Math.max(1,video.videoHeight*scale);
+    this.viewport.update({width:screen.clientWidth,height:screen.clientHeight,
+      left:video.offsetLeft+(video.clientWidth-width)/2,top:video.offsetTop+(video.clientHeight-height)/2,
+      contentWidth:width,contentHeight:height});
+  }
+  renderView() {
+    if (!this.viewport) return;
+    if (this.toolbar.hidden) video.style.removeProperty('transform');
+    else video.style.transform = `translate(${this.viewport.x}px, ${this.viewport.y}px) scale(${this.viewport.zoom})`;
+    const reset = document.querySelector('#mobile-zoom-reset');
+    reset.hidden = this.toolbar.hidden || this.viewport.zoom <= 1.001;
+    reset.textContent = `Reset zoom · ${Math.round(this.viewport.zoom*100)}%`;
     this.paint();
   }
   paint() {
     if (!this.gestures) return;
-    document.querySelector("#touch-drag").setAttribute("aria-pressed", String(this.gestures.held));
-    document.querySelector("#touch-drag").textContent = this.gestures.held ? "Release drag" : "Drag";
-    for (const button of document.querySelectorAll("[data-mobile-mod]")) button.setAttribute("aria-pressed", String(this.modifiers.has(button.dataset.mobileMod)));
-    this.cursor.hidden = this.toolbar.hidden || !inputSession() || inputSession()?.permissions?.mouse === false || this.gestures.mode !== "trackpad";
+    document.querySelector('#touch-drag').setAttribute('aria-pressed',String(this.gestures.held));
+    document.querySelector('#touch-drag').textContent = this.gestures.held ? 'Release drag' : 'Drag';
+    document.querySelector('#mobile-keyboard-toggle').setAttribute('aria-pressed',String(this.keyboard.active));
+    document.querySelector('#mobile-keyboard-toggle').textContent = this.keyboard.active ? 'Typing' : 'Keyboard';
+    for (const button of document.querySelectorAll('[data-mobile-mod]')) button.setAttribute('aria-pressed',String(this.modifiers.has(button.dataset.mobileMod)));
+    this.cursor.hidden = this.toolbar.hidden || !inputSession() || inputSession()?.permissions?.mouse === false || this.gestures.mode !== 'trackpad';
     if (!this.cursor.hidden) {
-      const box = this.displayRect(), outer = workspace.getBoundingClientRect();
-      this.cursor.style.left = `${box.left - outer.left + box.width * this.gestures.cursor.x}px`;
-      this.cursor.style.top = `${box.top - outer.top + box.height * this.gestures.cursor.y}px`;
+      const box = this.displayRect(),outer = workspace.getBoundingClientRect();
+      this.cursor.style.left = `${box.left-outer.left+box.width*this.gestures.cursor.x}px`;
+      this.cursor.style.top = `${box.top-outer.top+box.height*this.gestures.cursor.y}px`;
     }
   }
-  showKeyboard(open) {
-    stopCapture(active); setMenu(false, false);
-    this.panel.hidden = !open;
-    document.querySelector("#mobile-keyboard-toggle").setAttribute("aria-expanded", String(open));
+  showNativeKeyboard() {
+    if (this.keyboard.active) { this.keyboard.stop(); return; }
+    stopCapture(active); setMenu(false,false); this.keyboard.start();
+  }
+  showKeys(open) {
+    this.gestures.reset(); setMenu(false,false); this.panel.hidden = !open;
+    document.querySelector('#mobile-keys-toggle').setAttribute('aria-expanded',String(open));
+    if (!open) { this.modifiers.clear(); this.paint(); }
     this.layout();
-    if (open) this.field.focus({preventScroll: true}); else { this.field.blur(); video.focus({preventScroll: true}); }
+    if (this.keyboard.active) this.field.focus({preventScroll:true});
   }
   key(code) {
     const session = inputSession();
     if (!session || session.permissions?.keyboard === false) return;
-    const keys = [...this.modifiers, code];
-    for (const key of keys) send(session, {type: "key", code: key, pressed: true});
-    for (const key of keys.reverse()) send(session, {type: "key", code: key, pressed: false});
+    const modifiers = [...this.modifiers];
+    if (session.features?.directText) {
+      if (this.keyboard.session !== session) { this.keyboard.cancelPending(); this.keyboard.session = session; }
+      this.keyboard.key(code,modifiers);
+    } else {
+      const keys = [...modifiers,code];
+      for (const key of keys) send(session,{type:'key',code:key,pressed:true});
+      for (const key of keys.reverse()) send(session,{type:'key',code:key,pressed:false});
+    }
     this.modifiers.clear(); this.paint();
   }
-  sendText() {
-    const session = inputSession();
-    try {
-      if (!session || session.permissions?.keyboard === false || session.permissions?.clipboard === false || !session.features.clipboardSync)
-        throw new Error("Text entry needs keyboard and clipboard access on this host.");
-      if (session.pendingControl || session.mobileText || !session.clip || session.clip.busy || session.clip.pending !== null)
-        throw new Error("Clipboard transfer is busy. Try again when it finishes.");
-      const payload = mobileTextPayload(this.field.value);
-      session.mobileText = {text: payload.text};
-      session.clip.pending = payload.text; session.clip.busy = true;
-      session.mobileText.timer = setTimeout(() => this.textFailed(session,
-        "No confirmation. Text may have been pasted; check before sending again."), 15000);
-      if (!send(session, payload)) { this.textFailed(session, "Connection closed before text could be sent."); return; }
-      this.textStatus.textContent = "Sending text…";
-      desktopControls(active);
-    } catch (error) { this.textStatus.textContent = error.message; }
-  }
-  textAcknowledged(session, text) {
-    if (session.mobileText?.text !== text) return;
-    if (this.field.value === text) this.field.value = "";
-    this.textFailed(session, "Text sent.");
-  }
-  textFailed(session, message) {
-    if (!session.mobileText) return;
-    clearTimeout(session.mobileText.timer);
-    if (session.clip) { session.clip.busy = false; if (session.clip.pending === session.mobileText.text) session.clip.pending = null; }
-    session.mobileText = null;
-    if (active === session) { this.textStatus.textContent = message; desktopControls(active); }
+  typingStatus(message,error = false) {
+    this.textStatus.textContent = message;
+    if (error && active?.authorized) {
+      show(message,'error');
+      setTimeout(() => { if (active?.authorized && status.textContent === message && inputSession()) showDesktop(active); },5000);
+    }
   }
 }
 mobileUI = new MobileControls();
