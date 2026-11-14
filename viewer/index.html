@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="referrer" content="no-referrer"><title>Connect</title>
-  <link rel="stylesheet" href="./style.css?v=direct-speed-test-1">
-  <script type="module" src="./app.js?v=direct-speed-test-1"></script>
+  <link rel="stylesheet" href="./style.css?v=mobile-viewer-1">
+  <script type="module" src="./app.js?v=mobile-viewer-1"></script>
 </head>
 <body>
   <header id="connection-card">
@@ -25,6 +25,26 @@
       <p id="empty"></p>
     </div>
     <p id="status" role="status">Ready to connect.</p>
+    <span id="touch-cursor" aria-hidden="true" hidden></span>
+    <nav id="mobile-toolbar" aria-label="Touch controls" hidden>
+      <select id="touch-mode" aria-label="Touch mode"><option value="trackpad">Trackpad</option><option value="direct">Direct touch</option></select>
+      <button id="mobile-keyboard-toggle" type="button" aria-controls="mobile-keyboard" aria-expanded="false">Keyboard</button>
+      <button id="touch-right-click" type="button">Right click</button>
+      <button id="touch-drag" type="button" aria-pressed="false">Drag</button>
+    </nav>
+    <section id="mobile-keyboard" aria-label="Phone keyboard" hidden>
+      <div class="menu-heading"><label for="mobile-text">Type text</label><button id="mobile-keyboard-close" type="button">Close</button></div>
+      <textarea id="mobile-text" rows="2" maxlength="8192" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type here, then Send text"></textarea>
+      <div class="toolbar"><button id="mobile-text-send" type="button">Send text</button><button type="button" data-mobile-key="Backspace" aria-label="Backspace">⌫</button><button type="button" data-mobile-key="Enter">Enter</button></div>
+      <p id="mobile-text-status" class="help" role="status">Send text uses the host clipboard and pastes into the focused app.</p>
+      <details><summary>More keys</summary><div class="mobile-key-grid">
+        <button type="button" data-mobile-mod="ControlLeft" aria-pressed="false">Ctrl</button><button type="button" data-mobile-mod="AltLeft" aria-pressed="false">Alt</button>
+        <button type="button" data-mobile-mod="ShiftLeft" aria-pressed="false">Shift</button><button type="button" data-mobile-mod="MetaLeft" aria-pressed="false">Win</button>
+        <button type="button" data-mobile-key="Escape">Esc</button><button type="button" data-mobile-key="Tab">Tab</button><button type="button" data-mobile-key="Delete">Del</button><button type="button" data-mobile-key="ArrowUp" aria-label="Arrow up">↑</button>
+        <button type="button" data-mobile-key="ArrowLeft" aria-label="Arrow left">←</button><button type="button" data-mobile-key="ArrowDown" aria-label="Arrow down">↓</button><button type="button" data-mobile-key="ArrowRight" aria-label="Arrow right">→</button><button type="button" data-mobile-key="KeyA">A</button>
+        <button type="button" data-mobile-key="KeyC">C</button><button type="button" data-mobile-key="KeyV">V</button><button type="button" data-mobile-key="KeyX">X</button><button type="button" data-mobile-key="KeyZ">Z</button>
+      </div><p class="help">Modifiers apply to the next key button, then release.</p></details>
+    </section>
     <button id="session-toggle" type="button" aria-expanded="false" aria-controls="session-menu" hidden disabled>Remmie</button>
     <aside id="session-menu" aria-label="Session menu" hidden>
       <div class="menu-heading"><strong id="server-label">Remote desktop</strong><button id="menu-close" type="button" aria-label="Close session menu">Close</button></div>
@@ -67,6 +87,8 @@
         <p id="audio-format" class="help"></p>
       </div></details>
       <details><summary>Input controls</summary><div class="section-body">
+        <label><input id="touch-controls-enabled" type="checkbox"> Enable touch controls</label>
+        <p class="help">One finger moves; tap clicks; hold then move drags. Two fingers scroll or tap for right-click. Drag keeps the left button held until released.</p>
         <button id="relative" type="button" aria-pressed="false" disabled>Relative mouse</button>
         <button id="release" type="button" disabled>Release controls</button>
         <label for="shortcut">Send a shortcut</label><div class="toolbar">
