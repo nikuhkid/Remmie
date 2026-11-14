@@ -350,6 +350,7 @@ function releaseInput(session) {
   session.motion = null;
   session.relativeMotion = null;
   session.buttons.clear();
+  session.buttonPointerId = null;
   if (session.authorized) send(session, { type: "release" });
 }
 
@@ -688,6 +689,7 @@ async function connect(password, intent = null, previous = null) {
     abort: new AbortController(),
     authorized: false,
     buttons: new Set(),
+    buttonPointerId: null,
     motionFrame: 0,
     handoverFrom: previous,
     handoverDeadline: previous ? performance.now()+codecHandoverTimeout : null,
@@ -877,6 +879,7 @@ async function connect(password, intent = null, previous = null) {
         profileSelect.value=message.profile || "general";
         session.download = old.download;
         session.buttons = old.buttons;
+        session.buttonPointerId = old.buttonPointerId;
         session.clip = old.clip ? {...old.clip,pending:null,busy:false} : null;
         document.querySelector("#desktop").srcObject = video.srcObject;
         document.querySelector("#desktop").play().catch(() => {});
@@ -1109,11 +1112,32 @@ function point(event, clamp = false) {
   return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
 }
 
+function syncPointerButtons(session, event, relative, position) {
+  if (!Number.isInteger(event.buttons) || event.buttons < 0) return;
+  const changes = [[0, 1], [1, 4], [2, 2]]
+    .map(([button, mask]) => ({button, pressed: !!(event.buttons & mask)}))
+    .filter(({button, pressed}) => pressed !== session.buttons.has(button));
+  // Chorded button changes arrive as pointermove, including without movement.
+  // Release changed buttons first and leave every unchanged hold intact.
+  changes.sort((a, b) => Number(a.pressed) - Number(b.pressed));
+  for (const {button, pressed} of changes) {
+    if (pressed) session.buttons.add(button);
+    else session.buttons.delete(button);
+    send(session, {type: "button", button, pressed, relative, ...position});
+  }
+  if (!session.buttons.size) session.buttonPointerId = null;
+}
+
 video.addEventListener("pointermove", event => {
   if (event.pointerType === "touch") return;
   const session = inputSession();
   if (!session || document.activeElement !== video) return;
-  if (document.pointerLockElement === video) {
+  const relative = document.pointerLockElement === video;
+  if (session.buttons.size) {
+    if (event.pointerId !== session.buttonPointerId) return;
+    syncPointerButtons(session, event, relative, relative ? {} : point(event, true));
+  }
+  if (relative) {
     session.relativeMotion ||= { dx: 0, dy: 0 };
     session.relativeMotion.dx += event.movementX;
     session.relativeMotion.dy += event.movementY;
@@ -1143,6 +1167,8 @@ video.addEventListener("pointerdown", event => {
   if (event.pointerType === "touch") return;
   const session = inputSession();
   if (!session || ![0, 1, 2].includes(event.button)) return;
+  if (session.buttons.size && session.buttonPointerId !== event.pointerId) return;
+  if (!Number.isInteger(event.buttons) || event.buttons < 0) return;
   const relative = document.pointerLockElement === video;
   const position = relative ? {} : point(event);
   if (!position) return;
@@ -1150,23 +1176,26 @@ video.addEventListener("pointerdown", event => {
   video.focus({ preventScroll: true });
   captureKeyboard();
   if (!relative) video.setPointerCapture(event.pointerId);
-  session.buttons.add(event.button);
-  send(session, { type: "button", button: event.button, pressed: true, relative, ...position });
+  session.buttonPointerId = event.pointerId;
+  syncPointerButtons(session, event, relative, position);
 });
 
 video.addEventListener("pointerup", event => {
   if (event.pointerType === "touch") return;
   const session = inputSession();
-  if (!session?.buttons.delete(event.button)) return;
+  if (!session?.buttons.size || session.buttonPointerId !== event.pointerId) return;
   const relative = document.pointerLockElement === video;
-  send(session, { type: "button", button: event.button, pressed: false, relative,
-    ...(relative ? {} : point(event, true)) });
+  syncPointerButtons(session, event, relative, relative ? {} : point(event, true));
 });
 
-video.addEventListener("pointercancel", () => releaseInput(active));
+video.addEventListener("pointercancel", event => {
+  const session = active?.handoverFrom || active;
+  if (event.pointerType === "touch" || session?.buttonPointerId === event.pointerId) releaseInput(session);
+});
 video.addEventListener("lostpointercapture", event => {
   if (event.pointerType === "touch") return;
-  if (active?.buttons.size) releaseInput(active);
+  const session = active?.handoverFrom || active;
+  if (session?.buttons.size && session.buttonPointerId === event.pointerId) releaseInput(session);
 });
 video.addEventListener("contextmenu", event => {
   if (inputSession()) event.preventDefault();
