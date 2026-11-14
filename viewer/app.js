@@ -255,6 +255,13 @@ function signalingBase(value) {
 // Existing explicit signaling links prefill the visible field; they never auto-connect.
 const linkedServer = new URL(location.href).searchParams.get("signal");
 if (linkedServer) serverField.value = linkedServer;
+else {
+  const hostedServer = document.querySelector('meta[name="remmie-host-endpoint"]')?.content;
+  if (hostedServer) {
+    try { if (signalingBase(hostedServer).origin === location.origin) serverField.value = hostedServer; }
+    catch { /* An invalid host hint never replaces the empty manual field. */ }
+  }
+}
 
 function videoCodecSupported(codec, name) {
   if (codec.mimeType.toLowerCase() !== `video/${name}`.toLowerCase()) return false;
@@ -465,6 +472,11 @@ function waitForIce(peer, signal) {
   });
 }
 
+function connectionRoute(candidateTypes,networkPath='public') {
+  if(networkPath==='tailscale')return 'Tailscale · VPN direct/relay state unverified';
+  return candidateTypes.includes('relay') ? 'Relayed connection' : 'Direct connection';
+}
+
 async function showRoute(session) {
   const report = await session.peer.getStats().catch(() => null);
   if (!report || active !== session) return;
@@ -484,7 +496,7 @@ async function showRoute(session) {
   const candidateTypes = [pair.localCandidateId, pair.remoteCandidateId]
     .map(id => report.get(id)?.candidateType);
   if (candidateTypes.every(Boolean)) {
-    route.textContent = candidateTypes.includes("relay") ? "Relayed connection" : "Direct connection";
+    route.textContent = connectionRoute(candidateTypes,session.features?.connectionPath);
   }
 }
 
@@ -535,6 +547,7 @@ function performanceInterval(report, previous) {
     bufferFrames: delta("jitterBufferEmittedCount"), freezes: delta("freezeCount"),
     codec: codec?.mimeType || null, width: inbound.frameWidth || null, height: inbound.frameHeight || null,
     route: types.every(Boolean) ? (types.includes("relay") ? "relayed" : "direct") : null,
+    networkPath:active?.features?.connectionPath || 'public',
     networkRTTMs: Number.isFinite(pair?.currentRoundTripTime) ? pair.currentRoundTripTime * 1000 : null,
     fps: decoded === null ? null : decoded / seconds,
     payloadMbps: delta("bytesReceived") === null ? null : delta("bytesReceived") * 8 / seconds / 1e6,
@@ -570,6 +583,7 @@ function summarizePerformance(samples) {
     resolution: samples.at(-1)?.width && samples.at(-1)?.height
       ? `${samples.at(-1).width}×${samples.at(-1).height}` : null,
     route: samples.at(-1)?.route || null,
+    networkPath:samples.at(-1)?.networkPath || 'public',
     decoder:samples.at(-1)?.decoder || null,powerEfficientDecoder:samples.at(-1)?.powerEfficientDecoder ?? null,
     hostVideo:samples.map(sample=>sample.hostTimings?.video).filter(Boolean).at(-1) || null,
     audio:{observedSeconds:audioTotal("seconds"),payloadMbps:ratio(audioTotal("payloadBytes"),audioTotal("seconds"),8/1e6),
@@ -584,6 +598,7 @@ function measurementText(result) {
   const s = result.summary;
   return ["Remmie performance measurement", result.reason,
     `Observed ${value(s.observedSeconds)}s; ${s.resolution || "unknown resolution"}; ${s.codec || "unknown codec"}; ${s.route || "unknown route"}`,
+    ...(s.networkPath==='tailscale' ? ['Access path: Tailscale; underlying VPN direct/relay state is unverified.'] : []),
     `Decoded FPS ${value(s.fps)}; video payload ${value(s.videoPayloadMbps, 3)} Mbps`,
     `Network RTT median/p95 ${value(s.networkRTTMedianMs)}/${value(s.networkRTTP95Ms)} ms`,
     `Packet loss ${value(s.packetLossPercent, 2)}%; dropped frames ${s.droppedFrames ?? "unavailable"}; freezes ${s.freezes ?? "unavailable"}`,
