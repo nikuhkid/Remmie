@@ -2,12 +2,65 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="referrer" content="no-referrer"><title>Connect</title>
-  <link rel="stylesheet" href="./style.css?v=chorded-mouse-1">
-  <script type="module" src="./app.js?v=chorded-mouse-1"></script>
+  <meta name="referrer" content="no-referrer"><title>Breach Protocol</title>
+  <link rel="stylesheet" href="./style.css?v=breach-gate-2">
+  <script type="module" src="./app.js?v=breach-gate-2"></script>
 </head>
-<body>
-  <header id="connection-card">
+<body class="breach-locked">
+  <section id="breach-gate" aria-labelledby="breach-title">
+    <div class="breach-shell">
+      <header class="breach-masthead">
+        <span>ACCESS TERMINAL <span class="breach-dim">// LOCAL INTERFACE</span></span>
+        <span class="breach-terminal-id">NET / 77.014</span>
+      </header>
+      <div class="breach-title-row">
+        <div><p class="breach-eyebrow">CONNECTION RESTRICTED</p><h1 id="breach-title">BREACH PROTOCOL</h1></div>
+        <div class="breach-board-meta"><span id="breach-board-id"></span><span>5 SEQUENCES / ONE BUFFER</span></div>
+      </div>
+      <div class="breach-telemetry">
+        <section class="breach-timer-box" aria-label="Breach timer">
+          <h2>BREACH TIME REMAINING</h2>
+          <div id="breach-timer" role="timer" aria-live="off">60.00</div>
+          <div class="breach-time-track"><div id="breach-time-bar"></div></div>
+          <span id="breach-timer-caption">STARTS ON FIRST SELECTION</span>
+        </section>
+        <section class="breach-buffer-box" aria-label="Selection buffer">
+          <div class="breach-panel-title"><h2>BUFFER</h2><span id="breach-buffer-count">00 / 14</span></div>
+          <div id="breach-buffer" aria-label="Selected hexadecimal codes"></div>
+          <p id="breach-state" role="status" aria-live="polite">Select a code in the first row to begin.</p>
+        </section>
+      </div>
+      <div class="breach-game">
+        <section class="breach-matrix-panel" aria-labelledby="breach-matrix-title">
+          <div class="breach-panel-title"><h2 id="breach-matrix-title">CODE MATRIX</h2><span id="breach-axis">ROW 01</span></div>
+          <div id="breach-matrix" role="group" aria-label="Code matrix. Start in the first row, then alternate column and row."></div>
+          <div class="breach-matrix-footer"><span id="breach-direction">SELECT FROM THE HIGHLIGHTED ROW</span><span>6 × 6</span></div>
+        </section>
+        <section class="breach-sequences-panel" aria-labelledby="breach-sequences-title">
+          <div class="breach-panel-title"><h2 id="breach-sequences-title">SEQUENCES REQUIRED TO UPLOAD</h2><span id="breach-complete-count">0 / 5</span></div>
+          <ol id="breach-sequences"></ol>
+          <p class="breach-requirement">ALL FIVE SEQUENCES MUST BE UPLOADED.</p>
+        </section>
+      </div>
+      <div class="breach-actions">
+        <div class="breach-game-actions"><button id="breach-retry" type="button">RESET BUFFER</button><button id="breach-new" type="button">NEW MATRIX</button></div>
+        <details id="breach-help"><summary>HOW TO BREACH</summary><p>Start in the first row. Your next selection must be in that code’s column, then its row, alternating each turn. Each cell can be used once. Match all five sequences anywhere in the same buffer; they can overlap. You have 14 slots and 60 seconds from your first selection. Arrow keys move between available codes; Enter or Space selects. Reset to retry, or choose a new matrix.</p></details>
+      </div>
+      <div class="breach-password-zone">
+        <div><h2>ALTERNATIVE ACCESS</h2><p>Already have the access key?</p></div>
+        <form id="breach-password-form">
+          <label class="breach-sr-only" for="breach-password">Page access password</label>
+          <input id="breach-password" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="256" placeholder="Enter access key" aria-describedby="breach-password-status">
+          <button id="breach-password-submit" type="submit">UNLOCK</button>
+          <p id="breach-password-status" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+      <footer class="breach-footer"><span>PROTOCOL / BREACH</span><span id="breach-footer-status">AWAITING INPUT</span><span>AUTHORIZATION REQUIRED</span></footer>
+    </div>
+    <noscript><p class="breach-noscript">JavaScript is required to unlock this interface.</p></noscript>
+  </section>
+
+  <header id="connection-card" data-breach-protected hidden inert>
     <form id="connect-form">
       <label for="server">Server</label>
       <input id="server" type="text" required maxlength="2048" autocomplete="url" inputmode="url" autocapitalize="none" spellcheck="false">
@@ -17,7 +70,7 @@
       <button id="connection-cancel" type="button" hidden>Cancel</button>
     </form>
   </header>
-  <main id="workspace">
+  <main id="workspace" data-breach-protected hidden inert>
     <div class="screen">
       <video id="desktop" autoplay muted playsinline tabindex="0" aria-label="Session display"></video>
       <audio id="desktop-audio" autoplay hidden></audio>

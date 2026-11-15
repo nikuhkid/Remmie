@@ -66,3 +66,157 @@ body.mobile-session #status { top: auto; bottom: calc(var(--mobile-reserved, 58p
   #connection-card { top: max(16px, 12dvh); max-height: calc(100dvh - 32px); overflow: auto; }
   #connect-form button { min-height: 44px; }
 }
+
+/* Breach entrance. All styles are scoped away from the existing viewer. */
+body.breach-locked { overflow: auto; background: #100c10; }
+#breach-gate {
+  --breach-yellow: #e6e87a;
+  --breach-green: #b2d29b;
+  --breach-muted: #8e9b85;
+  --breach-border: #454a38;
+  color: var(--breach-green); min-height: 100dvh;
+  font: 14px/1.45 "Consolas", "Liberation Mono", ui-monospace, monospace;
+  background: #100c10; padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+}
+#breach-gate .breach-shell { max-width: 1160px; margin: 0 auto; border-left: 3px solid var(--breach-yellow); padding-left: 28px; }
+#breach-gate .breach-masthead { display: flex; justify-content: space-between; gap: 16px; padding: 0 0 12px; border-bottom: 1px solid #5c3338; color: #e7827e; font-size: 11px; letter-spacing: .12em; }
+#breach-gate .breach-dim { color: #9e7979; }
+#breach-gate .breach-title-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 24px 0 26px; }
+#breach-gate .breach-eyebrow { font-size: 11px; letter-spacing: .18em; color: var(--breach-muted); margin: 0 0 5px; }
+#breach-gate h1 { font: 600 clamp(26px, 3.4vw, 42px)/1.1 "Bahnschrift", "Arial Narrow", "Segoe UI", sans-serif; color: var(--breach-yellow); letter-spacing: .04em; margin: 0; }
+#breach-gate h2 { font: 600 12px/1.45 "Consolas", ui-monospace, monospace; letter-spacing: .07em; color: var(--breach-yellow); margin: 0; }
+#breach-gate .breach-board-meta { text-align: right; display: grid; gap: 4px; font-size: 10px; letter-spacing: .08em; color: var(--breach-muted); }
+#breach-gate #breach-board-id { font-size: 13px; color: var(--breach-green); }
+#breach-gate .breach-telemetry { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 30px; margin-bottom: 25px; }
+#breach-gate .breach-timer-box { border: 1px solid var(--breach-border); padding: 14px 16px; background: #171a13; }
+#breach-gate #breach-timer { font-size: 36px; letter-spacing: -.04em; color: var(--breach-yellow); font-variant-numeric: tabular-nums; margin: 2px 0; }
+#breach-gate .breach-time-track { height: 3px; background: #3a3d2d; margin: 6px 0 8px; }
+#breach-gate #breach-time-bar { height: 100%; background: var(--breach-yellow); transform-origin: left; }
+#breach-gate #breach-timer-caption { display: block; font-size: 9px; letter-spacing: .06em; color: var(--breach-muted); }
+#breach-gate .breach-buffer-box { padding-top: 2px; min-width: 0; }
+#breach-gate .breach-panel-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 22px; margin: 0 0 12px; }
+#breach-gate .breach-panel-title > span { font-size: 11px; white-space: nowrap; color: var(--breach-muted); }
+#breach-gate #breach-buffer { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 4px; margin: 8px 0 12px; }
+#breach-gate .breach-slot { aspect-ratio: 1; max-height: 44px; display: grid; place-items: center; border: 1px solid #4d543e; color: var(--breach-yellow); font-size: clamp(12px, 1.5vw, 18px); background: #171a13; }
+#breach-gate .breach-slot.filled { background: #323923; border-color: #a1b86c; }
+#breach-gate .breach-slot.next { border-color: var(--breach-yellow); box-shadow: inset 0 -2px var(--breach-yellow); }
+#breach-gate #breach-state { font-size: 12px; min-height: 36px; color: var(--breach-muted); }
+#breach-gate .breach-game { display: grid; grid-template-columns: minmax(290px, .88fr) minmax(0, 1.12fr); gap: 38px; }
+#breach-gate .breach-matrix-panel, #breach-gate .breach-sequences-panel { min-width: 0; }
+#breach-gate #breach-matrix { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 3px; border: 1px solid #73764c; padding: 10px; background: #1c2118; }
+#breach-gate button, #breach-gate input, #breach-gate summary { border-radius: 0; font-family: inherit; }
+#breach-gate .breach-cell { min-height: 45px; aspect-ratio: 1.1; padding: 0; border: 1px solid transparent; background: #1c2118; font-size: clamp(18px, 2vw, 25px); color: var(--breach-green); font-weight: 400; }
+#breach-gate .breach-cell:disabled { opacity: 1; color: #7d8d73; cursor: default; }
+#breach-gate .breach-cell.available { background: #383e24; color: var(--breach-yellow); cursor: pointer; }
+#breach-gate .breach-cell.available:hover { background: var(--breach-yellow); border-color: var(--breach-yellow); color: #15180f; }
+#breach-gate .breach-cell.used { color: #4b5946; background: #161b13; }
+#breach-gate .breach-cell.last { border-color: var(--breach-yellow); color: var(--breach-yellow); background: #282f1c; }
+#breach-gate button:focus-visible, #breach-gate input:focus-visible, #breach-gate summary:focus-visible { outline: 2px solid var(--breach-yellow); outline-offset: 3px; }
+#breach-gate .breach-cell:focus-visible { outline-offset: -2px; }
+#breach-gate .breach-matrix-footer { display: flex; justify-content: space-between; gap: 14px; margin-top: 10px; font-size: 9px; letter-spacing: .05em; color: var(--breach-muted); }
+#breach-gate #breach-sequences { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--breach-border); }
+#breach-gate .breach-sequence { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 10px; padding: 14px 10px; min-height: 65px; border-bottom: 1px solid var(--breach-border); }
+#breach-gate .breach-sequence-label { display: grid; gap: 4px; }
+#breach-gate .breach-sequence-name { font-size: 11px; letter-spacing: .04em; color: var(--breach-green); }
+#breach-gate .breach-sequence-status { font-size: 9px; letter-spacing: .06em; color: var(--breach-muted); }
+#breach-gate .breach-sequence-codes { display: flex; gap: 6px; }
+#breach-gate .breach-sequence-codes span { font-size: 21px; line-height: 1; color: var(--breach-green); padding: 4px 3px; border-bottom: 2px solid transparent; }
+#breach-gate .breach-sequence-codes span.matched { color: var(--breach-yellow); border-bottom-color: var(--breach-yellow); background: #303720; }
+#breach-gate .breach-sequence.complete { background: #252f1d; box-shadow: inset 3px 0 var(--breach-green); }
+#breach-gate .breach-sequence.complete .breach-sequence-status { color: #c9eab1; }
+#breach-gate .breach-sequence.complete .breach-sequence-codes span { color: var(--breach-yellow); }
+#breach-gate .breach-requirement { margin-top: 12px; font-size: 10px; letter-spacing: .06em; color: var(--breach-muted); }
+#breach-gate .breach-actions { display: flex; align-items: start; justify-content: space-between; gap: 24px; margin: 23px 0; }
+#breach-gate .breach-game-actions { display: flex; gap: 10px; flex-shrink: 0; }
+#breach-gate .breach-actions button { background: transparent; border-color: #69744d; color: var(--breach-green); font-size: 11px; letter-spacing: .04em; min-height: 40px; }
+#breach-gate .breach-actions button:hover { background: #29301e; }
+#breach-gate #breach-help { border: 0; padding: 0; margin: 0; max-width: 570px; text-align: right; }
+#breach-gate #breach-help summary { padding: 10px 0; font-size: 10px; color: var(--breach-muted); letter-spacing: .05em; }
+#breach-gate #breach-help summary:hover { background: transparent; color: var(--breach-yellow); }
+#breach-gate #breach-help p { text-align: left; font-size: 12px; color: var(--breach-green); padding: 8px 0 0; }
+#breach-gate .breach-password-zone { display: grid; grid-template-columns: 250px 1fr; gap: 30px; padding: 20px 0 13px; border-top: 1px solid #5c3338; }
+#breach-gate .breach-password-zone h2 { color: #d49a8e; font-size: 11px; }
+#breach-gate .breach-password-zone > div p { color: #a7958e; font-size: 11px; margin-top: 4px; }
+#breach-gate #breach-password-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+#breach-gate #breach-password { min-width: 0; width: 100%; background: #181617; color: #ead6c4; border-color: #665049; padding: 11px 13px; font-size: 14px; min-height: 44px; }
+#breach-gate #breach-password::placeholder { color: #b69e92; }
+#breach-gate #breach-password-submit { padding: 11px 22px; background: var(--breach-yellow); border-color: var(--breach-yellow); color: #1c2113; font-size: 12px; font-weight: bold; letter-spacing: .06em; min-height: 44px; }
+#breach-gate #breach-password-submit:hover { background: #fbfba5; }
+#breach-gate #breach-password-submit:disabled { opacity: .65; }
+#breach-gate #breach-password-status { grid-column: 1 / -1; font-size: 11px; min-height: 16px; color: #f4a393; }
+#breach-gate .breach-footer { display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid #39312b; padding-top: 12px; font-size: 9px; letter-spacing: .08em; color: #a08b80; }
+#breach-gate .breach-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+#breach-gate .breach-noscript { text-align: center; color: #ff9f92; padding: 20px; }
+#breach-gate[data-result="failed"] #breach-state, #breach-gate[data-result="failed"] #breach-timer, #breach-gate[data-result="failed"] #breach-footer-status { color: #ff9f92; }
+#breach-gate[data-result="failed"] #breach-time-bar { background: #ff9f92; }
+#breach-gate[data-result="granted"] #breach-state { color: var(--breach-yellow); font-weight: bold; }
+@media (min-width: 1500px) { #breach-gate { padding-top: 45px; } }
+@media (min-width: 851px) and (max-height: 850px) {
+  #breach-gate { padding-top: 16px; padding-bottom: 16px; }
+  #breach-gate .breach-masthead { padding-bottom: 8px; }
+  #breach-gate .breach-title-row { padding: 16px 0; }
+  #breach-gate h1 { font-size: 32px; }
+  #breach-gate .breach-eyebrow { font-size: 10px; margin-bottom: 3px; }
+  #breach-gate .breach-telemetry { grid-template-columns: 220px minmax(0, 1fr); gap: 26px; margin-bottom: 16px; }
+  #breach-gate .breach-timer-box { padding: 8px 12px; }
+  #breach-gate .breach-timer-box h2 { font-size: 10px; }
+  #breach-gate #breach-timer { font-size: 28px; line-height: 1.15; }
+  #breach-gate #breach-timer-caption { font-size: 8px; }
+  #breach-gate .breach-panel-title { min-height: 18px; margin-bottom: 8px; }
+  #breach-gate h2 { font-size: 11px; }
+  #breach-gate #breach-buffer { margin: 8px 0; }
+  #breach-gate .breach-slot { max-height: 34px; }
+  #breach-gate #breach-state { min-height: 20px; font-size: 11px; }
+  #breach-gate .breach-cell { min-height: 39px; height: 39px; aspect-ratio: auto; font-size: 22px; }
+  #breach-gate .breach-sequence { min-height: 52px; padding-block: 8px; }
+  #breach-gate .breach-sequence-codes span { font-size: 20px; }
+  #breach-gate .breach-actions { margin: 16px 0; }
+  #breach-gate .breach-actions button { min-height: 36px; }
+  #breach-gate .breach-password-zone { grid-template-columns: 220px 1fr; gap: 26px; padding: 14px 0 6px; }
+  #breach-gate #breach-password, #breach-gate #breach-password-submit { min-height: 40px; padding-block: 9px; }
+}
+@media (max-width: 850px) {
+  #breach-gate { padding: 22px 18px; }
+  #breach-gate .breach-shell { padding-left: 18px; }
+  #breach-gate .breach-telemetry, #breach-gate .breach-password-zone { grid-template-columns: 190px minmax(0, 1fr); gap: 20px; }
+  #breach-gate .breach-game { gap: 22px; grid-template-columns: minmax(260px, 1fr) minmax(0, 1.1fr); }
+  #breach-gate .breach-sequence { grid-template-columns: 1fr; gap: 5px; padding: 9px 10px; min-height: 67px; }
+  #breach-gate .breach-sequence-label { display: flex; justify-content: space-between; flex-wrap: wrap; }
+  #breach-gate .breach-sequence-codes span { font-size: 19px; }
+  #breach-gate #breach-buffer { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  #breach-gate .breach-slot { max-height: 30px; aspect-ratio: auto; height: 30px; }
+}
+@media (max-width: 620px) {
+  #breach-gate { padding: max(16px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  #breach-gate .breach-shell { padding-left: 12px; border-left-width: 2px; }
+  #breach-gate .breach-masthead { font-size: 9px; letter-spacing: .03em; }
+  #breach-gate .breach-terminal-id, #breach-gate .breach-dim { display: none; }
+  #breach-gate .breach-title-row { padding: 20px 0; align-items: start; gap: 10px; }
+  #breach-gate .breach-board-meta { font-size: 8px; max-width: 85px; }
+  #breach-gate #breach-board-id { font-size: 10px; }
+  #breach-gate h1 { font-size: 27px; max-width: 220px; }
+  #breach-gate .breach-telemetry { grid-template-columns: 1fr; gap: 16px; margin-bottom: 18px; }
+  #breach-gate .breach-timer-box { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 10px 12px; }
+  #breach-gate .breach-timer-box h2 { font-size: 10px; }
+  #breach-gate #breach-timer { font-size: 29px; grid-column: 2; grid-row: 1 / 3; margin: 0; }
+  #breach-gate .breach-time-track { grid-column: 1; grid-row: 2; margin: 4px 16px 0 0; }
+  #breach-gate #breach-timer-caption { grid-column: 1 / -1; font-size: 8px; margin-top: 6px; }
+  #breach-gate #breach-state { min-height: 18px; font-size: 11px; }
+  #breach-gate .breach-game { grid-template-columns: 1fr; gap: 22px; }
+  #breach-gate .breach-cell { min-height: 44px; max-height: 62px; font-size: 23px; }
+  #breach-gate #breach-matrix { padding: 7px; }
+  #breach-gate .breach-sequence { grid-template-columns: minmax(105px, 1fr) auto; min-height: 54px; gap: 8px; padding: 10px 6px; }
+  #breach-gate .breach-sequence-label { display: grid; }
+  #breach-gate .breach-sequence-name { font-size: 10px; }
+  #breach-gate .breach-sequence-codes { gap: 3px; }
+  #breach-gate .breach-sequence-codes span { font-size: 18px; padding: 3px 2px; }
+  #breach-gate .breach-actions { flex-direction: column; gap: 8px; margin: 18px 0; }
+  #breach-gate .breach-game-actions { width: 100%; }
+  #breach-gate .breach-game-actions button { flex: 1; min-height: 44px; }
+  #breach-gate #breach-help { text-align: left; }
+  #breach-gate #breach-help summary { min-height: 40px; }
+  #breach-gate .breach-password-zone { grid-template-columns: 1fr; gap: 12px; }
+  #breach-gate #breach-password { font-size: 16px; }
+  #breach-gate #breach-password-submit { padding-inline: 14px; }
+  #breach-gate .breach-footer { font-size: 8px; gap: 10px; flex-wrap: wrap; }
+}
