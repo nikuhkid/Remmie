@@ -16,10 +16,12 @@ class BreachResultPresenter {
     this.current = null;
   }
   get active() { return this.current !== null; }
-  present(kind, detail) {
+  present(kind, detail, options = {}) {
     if (kind === 'denied' && this.current?.kind === 'granted') return Promise.resolve(false);
     if (this.current?.kind === kind) {
       this.parts.detail.textContent = detail;
+      if(options.next)this.parts.next.textContent=options.next;
+      if(this.parts.protocol&&options.protocol)this.parts.protocol.textContent=options.protocol;
       return this.current.promise;
     }
     if (this.current) { this.cancel(this.current.timer); this.current.resolve(false); }
@@ -33,7 +35,8 @@ class BreachResultPresenter {
     title.textContent = granted ? 'ACCESS GRANTED' : 'ACCESS DENIED';
     code.textContent = granted ? '/ACCESS_REQUEST_SUCCESS' : '/ACCESS_REQUEST_FAILED';
     detailElement.textContent = detail;
-    next.textContent = granted ? 'OPENING INTERFACE' : 'RETURNING TO TERMINAL';
+    next.textContent = options.next || (granted ? 'OPENING INTERFACE' : 'RETURNING TO TERMINAL');
+    if(this.parts.protocol)this.parts.protocol.textContent=options.protocol || 'BREACH PROTOCOL';
     screen.style.setProperty('--breach-result-duration', `${BREACH_RESULT_MS}ms`);
     screen.hidden = false;
     screen.focus({preventScroll: true});
@@ -127,6 +130,179 @@ async function breachVerifyPassword(password, cryptoProvider = globalThis.crypto
   return mismatch === 0;
 }
 
+const CircuitRouting = (()=>{
+const LEVELS = [{"size":8,"start":24,"exit":47,"relays":[5,57,22],"initial":[12,3,10,12,3,9,3,0,12,9,9,6,12,10,6,0,12,10,9,0,3,10,6,3,3,10,3,0,3,3,10,10,3,9,0,0,10,6,9,5,6,10,5,12,5,10,6,3,5,3,12,6,6,10,3,6,12,9,6,5,5,3,5,5],"pulseMs":500},{"size":8,"start":16,"exit":39,"relays":[4,56,13],"initial":[12,9,6,10,6,10,5,3,6,3,5,9,12,9,10,6,3,6,6,5,0,5,3,5,3,10,6,5,0,6,3,5,3,5,5,9,9,5,9,12,12,9,6,0,5,6,9,12,9,6,9,3,12,0,0,0,6,10,10,12,6,12,10,10],"pulseMs":500},{"size":8,"start":32,"exit":55,"relays":[5,57,31],"initial":[0,0,9,0,6,9,3,6,10,3,6,3,10,9,5,9,5,0,0,5,12,9,12,10,0,12,10,9,12,10,12,9,5,3,5,5,12,10,5,5,9,10,10,3,6,6,5,10,10,3,12,3,6,3,3,3,9,3,9,5,10,3,9,3],"pulseMs":500},{"size":8,"start":16,"exit":39,"relays":[6,56,30],"initial":[0,12,10,5,6,6,3,0,6,5,5,0,9,9,5,6,5,12,12,3,9,3,3,0,6,6,0,5,12,5,12,12,0,10,5,5,9,12,10,6,12,10,5,6,5,9,5,3,5,12,12,6,9,12,3,9,3,12,9,10,5,3,9,6],"pulseMs":500},{"size":8,"start":16,"exit":39,"relays":[4,56,14],"initial":[10,9,3,10,6,12,3,5,0,5,10,3,6,10,9,12,5,10,6,10,10,5,9,10,6,10,5,5,12,9,3,5,12,5,9,6,9,5,5,3,10,12,6,3,10,5,3,9,3,9,0,10,3,3,10,0,12,10,5,12,6,0,0,0],"pulseMs":500},{"size":8,"start":24,"exit":55,"relays":[6,57,29],"initial":[12,0,12,5,10,9,12,9,0,6,5,3,12,12,3,5,9,6,9,12,10,5,9,5,3,10,9,3,6,3,12,9,9,6,10,12,5,3,6,6,0,9,6,6,12,9,10,3,0,10,9,6,5,10,9,5,9,3,9,0,0,10,5,5],"pulseMs":500},{"size":8,"start":32,"exit":47,"relays":[4,57,14],"initial":[9,3,12,9,3,5,12,10,10,5,12,5,3,12,12,12,0,12,6,6,3,12,5,10,0,5,9,3,5,9,3,10,5,5,5,6,10,10,6,6,10,0,10,12,6,5,12,10,0,3,5,6,12,9,5,0,0,12,10,5,3,10,10,3],"pulseMs":500},{"size":8,"start":32,"exit":39,"relays":[6,56,29],"initial":[12,6,10,3,5,10,9,0,9,0,0,5,9,10,6,5,9,5,9,3,10,3,5,9,0,12,5,3,10,12,6,0,5,5,3,9,9,10,10,3,12,6,12,9,9,10,12,12,3,10,12,3,5,3,9,9,6,5,5,6,6,3,0,9],"pulseMs":500},{"size":8,"start":24,"exit":39,"relays":[5,56,14],"initial":[0,10,12,10,10,9,0,10,9,3,5,12,0,5,9,3,5,0,5,6,10,12,10,5,5,5,9,10,9,3,10,5,9,5,3,3,5,9,12,9,0,12,6,12,9,10,0,9,9,9,10,5,12,6,6,5,6,5,10,12,9,12,12,5],"pulseMs":500},{"size":8,"start":24,"exit":55,"relays":[13,56,14],"initial":[6,3,9,12,6,9,0,0,3,10,10,3,5,3,9,6,9,10,9,3,3,3,5,10,3,9,5,9,10,6,3,10,10,5,0,6,6,10,6,9,9,10,5,3,3,12,3,6,5,12,5,5,3,3,12,6,6,6,0,0,10,9,3,0],"pulseMs":500},{"size":8,"start":16,"exit":39,"relays":[13,56,14],"initial":[6,3,0,12,0,0,0,0,12,3,5,12,5,12,3,12,5,10,5,9,6,12,10,10,5,3,0,12,5,9,6,10,6,12,12,12,5,3,6,3,5,10,12,10,6,3,3,9,9,10,12,9,5,5,9,10,9,10,10,12,6,12,12,6],"pulseMs":500},{"size":8,"start":24,"exit":39,"relays":[6,56,22],"initial":[3,0,0,0,12,10,12,10,9,0,9,10,10,12,12,12,10,10,3,10,12,10,3,12,5,5,6,12,10,6,5,5,3,3,6,5,3,9,5,12,12,5,5,3,6,0,9,6,5,3,0,6,5,5,9,5,12,10,5,3,9,9,12,9],"pulseMs":500},{"size":8,"start":32,"exit":47,"relays":[5,56,31],"initial":[0,6,10,5,6,12,12,10,3,10,6,9,6,3,6,9,12,6,6,0,9,5,10,12,5,3,6,12,5,10,3,9,3,12,9,10,5,12,12,5,6,0,12,10,3,10,0,9,12,10,6,6,5,6,3,0,3,10,10,9,10,0,3,9],"pulseMs":500},{"size":8,"start":16,"exit":55,"relays":[4,57,14],"initial":[12,5,5,6,6,9,10,9,10,0,0,6,9,5,9,9,6,5,9,10,5,9,10,5,0,0,5,9,10,10,6,5,0,12,5,10,3,6,3,3,9,10,3,10,3,9,10,6,3,12,6,9,3,9,6,10,3,3,5,5,9,0,9,10],"pulseMs":500},{"size":8,"start":24,"exit":47,"relays":[5,56,31],"initial":[9,9,0,9,6,6,6,12,5,12,6,3,12,5,3,3,5,6,10,12,6,9,9,12,3,5,0,12,5,3,10,10,6,3,9,3,9,12,10,5,3,0,9,12,6,5,3,12,6,10,9,6,9,9,6,0,3,5,10,9,0,6,12,0],"pulseMs":500},{"size":8,"start":16,"exit":39,"relays":[6,56,30],"initial":[12,5,5,6,3,6,6,0,5,6,10,10,3,3,5,0,6,6,9,9,9,9,3,0,9,0,6,10,10,10,9,12,3,6,10,12,0,5,5,9,6,3,3,5,12,3,5,10,5,12,9,9,9,6,12,10,9,3,3,5,5,12,0,5],"pulseMs":500},{"size":8,"start":32,"exit":47,"relays":[5,57,14],"initial":[0,6,6,12,10,6,6,3,6,3,6,6,9,9,10,5,5,10,0,0,5,3,6,10,5,0,9,6,5,5,9,6,3,9,3,5,12,5,10,9,9,9,3,6,9,9,12,5,3,10,12,3,5,9,12,3,12,12,10,10,9,0,3,0],"pulseMs":500},{"size":8,"start":32,"exit":39,"relays":[6,56,30],"initial":[10,3,10,12,10,5,6,6,6,9,3,3,12,5,12,5,0,3,9,12,3,9,9,12,3,9,0,10,3,3,5,10,3,5,12,6,12,3,10,6,6,9,5,3,5,10,3,5,9,5,3,5,0,0,0,0,9,5,5,9,12,12,12,3],"pulseMs":500},{"size":8,"start":32,"exit":39,"relays":[4,56,21],"initial":[9,6,12,9,12,10,5,5,6,0,3,5,5,0,0,9,0,9,6,9,5,12,12,10,0,6,5,6,9,5,9,3,5,10,12,5,0,6,9,9,12,6,6,12,6,9,5,5,10,9,6,9,9,3,3,12,6,10,5,9,12,6,5,3],"pulseMs":500},{"size":8,"start":32,"exit":47,"relays":[6,56,22],"initial":[3,5,6,6,9,10,10,6,0,3,10,9,3,6,5,9,10,0,5,10,12,3,3,3,9,12,9,9,5,0,5,10,5,6,3,9,5,6,6,5,0,3,10,5,9,5,9,9,3,12,6,5,5,12,0,3,6,10,12,10,0,9,12,12],"pulseMs":500}];
+const LEVEL = LEVELS[0];
+
+class CircuitDeck {
+  constructor(size,initial=0,random=()=>Math.random()){
+    if(!Number.isInteger(size)||size<1||!Number.isInteger(initial)||initial<0||initial>=size)throw new RangeError('Invalid circuit deck');
+    this.size=size;this.current=initial;this.random=random;
+    this.remaining=this.shuffle(Array.from({length:size},(_,i)=>i).filter(i=>i!==initial));
+  }
+  shuffle(values){for(let i=values.length-1;i>0;i--){const j=Math.floor(this.random()*(i+1));[values[i],values[j]]=[values[j],values[i]];}return values;}
+  next(){
+    if(this.size===1)return this.current;
+    if(!this.remaining.length){
+      this.remaining=this.shuffle(Array.from({length:this.size},(_,i)=>i));
+      const last=this.remaining.length-1;
+      if(this.remaining[last]===this.current)[this.remaining[0],this.remaining[last]]=[this.remaining[last],this.remaining[0]];
+    }
+    this.current=this.remaining.pop();return this.current;
+  }
+}
+const PORTS=[1,2,4,8];
+function rotate(mask,turns=1){for(let i=0;i<((turns%4)+4)%4;i++)mask=((mask<<1)&15)|((mask>>3)&1);return mask;}
+function coordinate(index,level=LEVEL){return String.fromCharCode(65+Math.floor(index/level.size))+(index%level.size+1);}
+function createState(level=LEVEL){return {level,masks:[...level.initial],status:'planning',path:[],relays:0,current:null,entry:8,failure:null,message:'Plan a route through A, B and C, in that order, then OUT.'};}
+function reject(state,message,index=state.current){state.status='failed';state.failure=index;state.message=message;return {kind:'fail',message};}
+function clearSignal(state){state.status='planning';state.path=[];state.relays=0;state.current=null;state.failure=null;state.entry=8;}
+function turnTile(state,index,turns=1){
+  if(!Number.isInteger(index)||index<0||index>=state.masks.length||!state.masks[index]||state.status==='won')return false;
+  if(state.status==='running'&&state.path.includes(index))return false;
+  if(state.status==='failed')clearSignal(state);
+  state.masks[index]=rotate(state.masks[index],turns);
+  return true;
+}
+function begin(state){
+  if(state.status==='running'||state.status==='won')return {kind:'invalid'};
+  clearSignal(state);state.status='running';
+  return enter(state,state.level.start,8);
+}
+function enter(state,index,entry){
+  if(state.status!=='running')return {kind:'invalid'};
+  const level=state.level;
+  state.current=index;state.entry=entry;
+  if(state.path.includes(index))return reject(state,`Signal loop at ${coordinate(index)}.`);
+  if(!state.masks[index])return reject(state,`Offline sector at ${coordinate(index)}. Route around it.`);
+  if(!(state.masks[index]&entry))return reject(state,`Closed opening at ${coordinate(index)}.`);
+  const relay=level.relays.indexOf(index);
+  if(relay>=0){
+    if(relay!==state.relays)return reject(state,`Relay ${String.fromCharCode(65+relay)} reached before relay ${String.fromCharCode(65+state.relays)}.`);
+    state.relays++;
+  }
+  state.path.push(index);
+  state.message=`Pulse at ${coordinate(index)}. ${state.relays}/3 relays crossed.`;
+  return {kind:'entered',index};
+}
+function advance(state){
+  if(state.status!=='running')return {kind:'invalid'};
+  const level=state.level;
+  const mask=state.masks[state.current];
+  const exit=PORTS.find(port=>port!==state.entry&&(mask&port));
+  if(!exit)return reject(state,`Dead end at ${coordinate(state.current)}.`);
+  if(state.current===level.exit&&exit===2){
+    if(state.relays!==level.relays.length)return reject(state,'OUT reached before all three relays. Route through A → B → C first.');
+    state.status='won';state.message='CIRCUIT BREACHED. All three relays crossed in order. OUT reached.';return {kind:'win'};
+  }
+  const direction=PORTS.indexOf(exit),row=Math.floor(state.current/level.size),col=state.current%level.size;
+  const nextRow=row+[-1,0,1,0][direction],nextCol=col+[0,1,0,-1][direction];
+  if(nextRow<0||nextRow>=level.size||nextCol<0||nextCol>=level.size)return reject(state,`Signal leaked off the board at ${coordinate(state.current)}.`);
+  return enter(state,nextRow*level.size+nextCol,PORTS[(direction+2)%4]);
+}
+function trace(masks,level=LEVEL){
+  const state=createState(level);state.masks=[...masks];begin(state);
+  for(let steps=0;state.status==='running'&&steps<=level.size*level.size;steps++)advance(state);
+  if(state.status==='running')reject(state,'Signal traversal limit exceeded.');
+  return state;
+}
+
+function mountCircuitChallenge(root,{onResult,canPlay,signal}) {
+  const find=id=>root.querySelector('#'+id);
+  const board=find('board'),feedback=find('feedback'),launch=find('launch');
+  const deck=new CircuitDeck(LEVELS.length,Math.floor(Math.random()*LEVELS.length));
+  let first=true,level,state,timer=null,generation=0,focused=0,finished=false;
+  const listen=(element,type,callback)=>element.addEventListener(type,callback,{signal});
+  function stop(){generation++;if(timer!==null)clearTimeout(timer);timer=null;}
+  function svg(mask,index){
+    if(!mask)return '<svg viewBox="0 0 100 100" aria-hidden="true"><path class="offline-mark" d="M30 30L70 70M70 30L30 70"/></svg>';
+    const ends=[[50,0],[100,50],[50,100],[0,50]],relay=level.relays.indexOf(index);
+    return `<svg viewBox="0 0 100 100" aria-hidden="true">${PORTS.map((port,i)=>mask&port?`<path class="wire" d="M50 50L${ends[i][0]} ${ends[i][1]}"/>`:'').join('')}${relay>=0?`<circle class="relay-core" cx="50" cy="50" r="21"/><text class="relay-label" x="50" y="50">${String.fromCharCode(65+relay)}</text>`:''}${state.current===index&&state.status==='running'?'<circle class="pulse-core" cx="50" cy="50" r="10"/>':''}</svg>`;
+  }
+  function render(){
+    const active=document.activeElement?.id;
+    let html='<span class="coordinate" aria-hidden="true"></span>'+Array.from({length:level.size},(_,i)=>`<span class="coordinate" aria-hidden="true">${i+1}</span>`).join('');
+    for(let row=0;row<level.size;row++){
+      html+=`<span class="coordinate" aria-hidden="true">${String.fromCharCode(65+row)}</span>`;
+      for(let col=0;col<level.size;col++){
+        const index=row*level.size+col,mask=state.masks[index],relay=level.relays.indexOf(index),powered=state.path.includes(index);
+        const endpoint=index===level.start?'IN':index===level.exit?'OUT':'';
+        const ports=PORTS.map((port,i)=>mask&port?['north','east','south','west'][i]:null).filter(Boolean).join(' and ');
+        const label=`${coordinate(index,level)}. ${endpoint?endpoint+'. ':''}${relay>=0?'Relay '+String.fromCharCode(65+relay)+'. ':''}${mask?'Open '+ports+'. Rotate tile.':'Offline sector.'}`;
+        html+=`<button type="button" id="tile-${index}" data-tile="${index}" data-endpoint="${endpoint}" class="tile${powered?' powered':''}${index===level.start?' source':''}${index===level.exit?' exit':''}${relay>=0?' relay-tile':''}${!mask?' offline':''}${state.failure===index?' failure':''}" aria-label="${label}" tabindex="${index===focused?0:-1}" ${!mask||['won','failed'].includes(state.status)||(state.status==='running'&&powered)?'disabled':''}>${svg(mask,index)}</button>`;
+      }
+    }
+    board.innerHTML=html;
+    find('phase').textContent={planning:'PLANNING',running:'PULSE ACTIVE',failed:'CONNECTION LOST',won:'RETRY AUTHORIZED'}[state.status];
+    for(let i=0;i<3;i++){const relay=find('relay-'+String.fromCharCode(97+i));relay.classList.toggle('crossed',state.relays>i);relay.setAttribute('aria-label',`Relay ${String.fromCharCode(65+i)} ${state.relays>i?'crossed':'pending'}`);}
+    feedback.className='feedback'+(state.status==='failed'?' failed':state.status==='won'?' won':'');feedback.textContent=state.message;
+    launch.disabled=state.status!=='planning';launch.textContent=state.status==='running'?'Pulse running':state.status==='won'?'Retry authorized':state.status==='failed'?'Connection lost':'Send pulse';
+    find('entry-label').textContent=`IN → ${coordinate(level.start,level)}`;find('exit-label').textContent=`${coordinate(level.exit,level)} → OUT`;
+    if(active?.startsWith('tile-')){const previous=root.querySelector('#'+active);if(previous&&!previous.disabled)previous.focus({preventScroll:true});}
+    if(!finished&&['failed','won'].includes(state.status)){
+      finished=true;stop();onResult(state.status==='won',state.status==='won'?'CIRCUIT RESTORED. BREACH RETRY AUTHORIZED.':state.message);
+    }
+  }
+  function rotateAt(index,reverse=false){
+    if(!canPlay()||finished||!turnTile(state,index,reverse?-1:1))return;
+    focused=index;state.message=`Rotated ${coordinate(index,level)}. Cross A → B → C before reaching OUT.`;render();
+  }
+  function schedule(){const ticket=generation;timer=setTimeout(()=>{
+    timer=null;if(ticket!==generation||!canPlay()||state.status!=='running')return;
+    advance(state);render();if(state.status==='running')schedule();
+  },level.pulseMs);}
+  listen(board,'click',event=>{const tile=event.target.closest('[data-tile]');if(tile)rotateAt(Number(tile.dataset.tile),event.shiftKey);});
+  listen(board,'contextmenu',event=>{const tile=event.target.closest('[data-tile]');if(!tile)return;event.preventDefault();rotateAt(Number(tile.dataset.tile),true);});
+  listen(board,'keydown',event=>{
+    if(!canPlay()||finished)return;const tile=event.target.closest('[data-tile]');if(!tile)return;
+    const index=Number(tile.dataset.tile);
+    if(event.key==='Enter'&&event.shiftKey){event.preventDefault();rotateAt(index,true);return;}
+    if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key))return;
+    event.preventDefault();const direction={ArrowUp:-level.size,ArrowDown:level.size,ArrowLeft:-1,ArrowRight:1}[event.key];let next=index;
+    for(let steps=0;steps<level.size;steps++){
+      const candidate=next+direction;if(candidate<0||candidate>=state.masks.length||(Math.abs(direction)===1&&Math.floor(candidate/level.size)!==Math.floor(next/level.size)))break;
+      next=candidate;const target=root.querySelector('#tile-'+next);if(target&&!target.disabled){focused=next;for(const button of board.querySelectorAll('[data-tile]'))button.tabIndex=Number(button.dataset.tile)===next?0:-1;target.focus();break;}
+    }
+  });
+  listen(launch,'click',()=>{if(!canPlay()||finished||state.status!=='planning')return;stop();begin(state);render();if(state.status==='running')schedule();});
+  listen(window,'pagehide',stop);
+  listen(window,'pageshow',event=>{if(event.persisted&&canPlay()&&state?.status==='running')schedule();});
+  signal.addEventListener('abort',stop,{once:true});
+  return {start(){stop();level=LEVELS[first?deck.current:deck.next()];first=false;state=createState(level);focused=level.start;finished=false;find('board-scroll').scrollLeft=0;render();},stop};
+}
+
+return {LEVELS,CircuitDeck,PORTS,createState,turnTile,begin,advance,trace,mountCircuitChallenge};
+})();
+class BreachAccessFlow {
+  constructor(actions) { this.actions=actions; this.stage='breach'; this.revision=0; }
+  get canUnlock() { return !['unlocking','unlocked','redirect-pending','redirected'].includes(this.stage); }
+  async failBreach(reason) {
+    if(this.stage!=='breach')return false;
+    this.stage='circuit-pending';const revision=++this.revision;
+    const completed=await this.actions.present('denied',reason,{next:'LOADING SECOND CHANCE',protocol:'BREACH PROTOCOL'});
+    if(!completed||revision!==this.revision||this.stage!=='circuit-pending')return false;
+    this.stage='circuit';this.actions.showCircuit();return true;
+  }
+  async finishCircuit(won,detail) {
+    if(this.stage!=='circuit')return false;
+    this.stage=won?'breach-pending':'redirect-pending';const revision=++this.revision;
+    const completed=await this.actions.present(won?'granted':'denied',detail,{
+      next:won?'RETRYING BREACH':'REDIRECTING TO GOOGLE',protocol:'CIRCUIT ROUTING'
+    });
+    if(!completed||revision!==this.revision)return false;
+    if(won){this.stage='breach';this.actions.showBreach();}
+    else{this.stage='redirected';this.actions.redirect('https://www.google.com/');}
+    return true;
+  }
+  async unlock(detail) {
+    if(!this.canUnlock)return false;
+    this.stage='unlocking';const revision=++this.revision;
+    const completed=await this.actions.present('granted',detail,{next:'OPENING INTERFACE',protocol:'BREACH PROTOCOL'});
+    if(!completed||revision!==this.revision)return false;
+    this.stage='unlocked';this.actions.grant();return true;
+  }
+}
+
 function waitForBreachUnlock() {
   return new Promise(resolve => {
     const root = document.querySelector('#breach-gate');
@@ -140,7 +316,7 @@ function waitForBreachUnlock() {
     const passwordButton = find('password-submit');
     const passwordStatus = find('password-status');
     const resultScreen = new BreachResultPresenter({
-      screen: find('outcome'), shell: root.querySelector('.breach-shell'),
+      screen: find('outcome'), shell: root.querySelector('.breach-stages'), protocol: find('outcome-protocol'),
       title: find('outcome-title'), code: find('outcome-code'),
       detail: find('outcome-detail'), next: find('outcome-next'),
     });
@@ -154,29 +330,49 @@ function waitForBreachUnlock() {
     const cleanup = new AbortController();
     const listen = (element, type, callback) => element.addEventListener(type, callback, {signal: cleanup.signal});
 
+    const breachPanel=root.querySelector('.breach-shell');
+    const circuitRoot=find('circuit');
+    const flow=new BreachAccessFlow({
+      present:(...args)=>resultScreen.present(...args),
+      showCircuit(){
+        stopClock();breachPanel.hidden=true;circuitRoot.hidden=false;root.dataset.stage='circuit';root.dataset.result='ready';
+        passwordField.value='';circuit.start();document.title='Circuit Routing';
+        circuitRoot.querySelector('h1').focus({preventScroll:true});circuitRoot.scrollIntoView({block:'start'});
+      },
+      showBreach(){
+        circuit.stop();circuitRoot.hidden=true;breachPanel.hidden=false;root.dataset.stage='breach';
+        passwordStatus.textContent='';passwordField.removeAttribute('aria-invalid');
+        passwordButton.disabled=passwordBusy;passwordField.disabled=passwordBusy;passwordButton.textContent=passwordBusy?'VERIFYING':'UNLOCK';
+        nextBoard();loadBoard();document.title='Breach Protocol';
+        matrix.querySelector('button.available')?.focus({preventScroll:true});breachPanel.scrollIntoView({block:'start'});
+      },
+      grant(){
+        stopClock();circuit.stop();cleanup.abort();root.remove();document.body.classList.remove('breach-locked');
+        for(const element of document.querySelectorAll('[data-breach-protected]')){
+          element.hidden=false;element.inert=false;element.removeAttribute('data-breach-protected');
+        }
+        document.title='Connect';resolve();
+        requestAnimationFrame(()=>document.querySelector('#server')?.focus({preventScroll:true}));
+      },
+      redirect:url=>window.location.replace(url),
+    });
+    const circuit=CircuitRouting.mountCircuitChallenge(circuitRoot,{
+      onResult:(won,detail)=>flow.finishCircuit(won,detail),canPlay:()=>flow.stage==='circuit',signal:cleanup.signal,
+    });
     function stopClock() { cancelAnimationFrame(frame); frame = 0; }
-    async function unlock(detail = 'ACCESS KEY VERIFIED') {
-      if (unlocked) return;
-      unlocked = true;
-      stopClock();
-      root.dataset.result = 'granted';
-      status.textContent = 'ACCESS GRANTED. Opening interface…';
-      find('footer-status').textContent = 'ACCESS GRANTED';
-      passwordField.value = '';
-      for (const button of root.querySelectorAll('button')) button.disabled = true;
-      passwordField.disabled = true;
-      await resultScreen.present('granted', detail);
-      cleanup.abort();
-      root.remove();
-      document.body.classList.remove('breach-locked');
-      for (const element of document.querySelectorAll('[data-breach-protected]')) {
-        element.hidden = false;
-        element.inert = false;
-        element.removeAttribute('data-breach-protected');
+    function unlock(detail='ACCESS KEY VERIFIED'){
+      if(unlocked||!flow.canUnlock)return;
+      unlocked=true;stopClock();circuit.stop();root.dataset.result='granted';
+      status.textContent='ACCESS GRANTED. Opening interface…';find('footer-status').textContent='ACCESS GRANTED';
+      passwordField.value='';for(const button of root.querySelectorAll('button'))button.disabled=true;passwordField.disabled=true;
+      return flow.unlock(detail);
+    }
+    function nextBoard(){
+      if(!bag.length){
+        bag=BREACH_BOARDS.map((_,index)=>index).filter(index=>index!==boardIndex);
+        for(let i=bag.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[bag[i],bag[j]]=[bag[j],bag[i]];}
       }
-      document.title = 'Connect';
-      resolve();
-      requestAnimationFrame(() => document.querySelector('#server')?.focus({preventScroll: true}));
+      boardIndex=bag.pop();
     }
     function paintClock() {
       const seconds = puzzle.remaining() / 1000;
@@ -191,6 +387,8 @@ function waitForBreachUnlock() {
       else if (!unlocked && puzzle.result === 'running') frame = requestAnimationFrame(clock);
     }
     function render() {
+      if(flow.stage!=='breach')return;
+      find('retry').disabled=false;find('new').disabled=false;
       root.dataset.result = puzzle.result === 'failed' ? 'failed' : puzzle.result;
       const progress = puzzle.progress();
       const complete = puzzle.completed();
@@ -227,13 +425,12 @@ function waitForBreachUnlock() {
       paintClock();
       if (puzzle.result === 'failed') {
         stopClock();
-        status.textContent = `${puzzle.reason}. ${complete}/5 uploaded. Reset the buffer or try a new matrix.`;
+        status.textContent = `${puzzle.reason}. ${complete}/5 uploaded. Circuit Routing is your second chance.`;
         find('retry').textContent = 'RETRY BREACH';
         if (!failurePresented && !unlocked) {
           failurePresented = true;
-          resultScreen.present('denied', puzzle.reason).then(completed => {
-            if (completed && !unlocked && puzzle.result === 'failed') find('retry').focus({preventScroll: true});
-          });
+          find('retry').disabled=true;find('new').disabled=true;
+          flow.failBreach(puzzle.reason);
         }
       } else if (puzzle.result === 'won') {
         unlock('ALL FIVE SEQUENCES UPLOADED');
@@ -268,7 +465,7 @@ function waitForBreachUnlock() {
       render();
     }
     listen(matrix, 'click', event => {
-      if (unlocked || resultScreen.active) return;
+      if (unlocked || flow.stage!=='breach' || resultScreen.active) return;
       const button = event.target.closest('button[data-cell]');
       if (!button || !puzzle.select(Number(button.dataset.cell))) return;
       render();
@@ -278,7 +475,7 @@ function waitForBreachUnlock() {
       }
     });
     listen(matrix, 'keydown', event => {
-      if (unlocked || resultScreen.active) return;
+      if (unlocked || flow.stage!=='breach' || resultScreen.active) return;
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const available = puzzle.available();
@@ -288,18 +485,14 @@ function waitForBreachUnlock() {
       for (const button of matrix.children) button.tabIndex = Number(button.dataset.cell) === available[next] ? 0 : -1;
       matrix.children[available[next]].focus({preventScroll: true});
     });
-    listen(find('retry'), 'click', () => { if (!unlocked && !resultScreen.active) loadBoard(); });
+    listen(find('retry'), 'click', () => { if (!unlocked && flow.stage==='breach' && !resultScreen.active) loadBoard(); });
     listen(find('new'), 'click', () => {
-      if (unlocked || resultScreen.active) return;
-      if (!bag.length) {
-        bag = BREACH_BOARDS.map((_, index) => index).filter(index => index !== boardIndex);
-        for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
-      }
-      boardIndex = bag.pop(); loadBoard();
+      if (unlocked || flow.stage!=='breach' || resultScreen.active) return;
+      nextBoard();loadBoard();
     });
     listen(passwordForm, 'submit', async event => {
       event.preventDefault();
-      if (passwordBusy || unlocked || resultScreen.active) return;
+      if (passwordBusy || unlocked || flow.stage!=='breach' || resultScreen.active) return;
       if (!passwordField.value) { passwordStatus.textContent = 'Enter the access key.'; passwordField.focus(); return; }
       passwordBusy = true; passwordButton.disabled = true; passwordField.disabled = true;
       passwordButton.textContent = 'VERIFYING'; passwordStatus.textContent = '';
@@ -307,7 +500,7 @@ function waitForBreachUnlock() {
       try {
         const checking = breachVerifyPassword(candidate); candidate = '';
         if (await checking) await unlock();
-        else if (!unlocked) {
+        else if (!unlocked && flow.stage==='breach') {
           passwordStatus.textContent = 'ACCESS DENIED. Key not recognized.';
           passwordField.setAttribute('aria-invalid', 'true');
           await resultScreen.present('denied', 'KEY NOT RECOGNIZED');
@@ -316,7 +509,7 @@ function waitForBreachUnlock() {
         if (!unlocked) passwordStatus.textContent = `${error.message} The breach puzzle is still available.`;
       } finally {
         candidate = ''; passwordBusy = false;
-        if (!unlocked) {
+        if (!unlocked && flow.stage==='breach') {
           passwordButton.disabled = false; passwordField.disabled = false; passwordButton.textContent = 'UNLOCK';
           (puzzle.result === 'failed' ? find('retry') : passwordField).focus({preventScroll: true});
         }
@@ -324,11 +517,12 @@ function waitForBreachUnlock() {
     });
     listen(passwordField, 'input', () => { passwordField.removeAttribute('aria-invalid'); passwordStatus.textContent = ''; });
     listen(document, 'visibilitychange', () => {
-      if (!document.hidden && !unlocked) { puzzle.tick(); render(); if (puzzle.result === 'running' && !frame) frame = requestAnimationFrame(clock); }
+      if (!document.hidden && !unlocked && flow.stage==='breach') { puzzle.tick(); render(); if (puzzle.result === 'running' && !frame) frame = requestAnimationFrame(clock); }
     });
-    loadBoard();
+    root.dataset.stage='breach';loadBoard();
   });
 }
+
 
 await waitForBreachUnlock();
 
