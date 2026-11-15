@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="referrer" content="no-referrer"><title>Breach Protocol</title>
-  <link rel="stylesheet" href="./style.css?v=breach-gate-2">
-  <script type="module" src="./app.js?v=breach-gate-2"></script>
+  <link rel="stylesheet" href="./style.css?v=breach-gate-3">
+  <script type="module" src="./app.js?v=breach-gate-3"></script>
 </head>
 <body class="breach-locked">
   <section id="breach-gate" aria-labelledby="breach-title">
@@ -15,7 +15,7 @@
       </header>
       <div class="breach-title-row">
         <div><p class="breach-eyebrow">CONNECTION RESTRICTED</p><h1 id="breach-title">BREACH PROTOCOL</h1></div>
-        <div class="breach-board-meta"><span id="breach-board-id"></span><span>5 SEQUENCES / ONE BUFFER</span></div>
+        <div class="breach-board-meta">5 SEQUENCES / ONE BUFFER</div>
       </div>
       <div class="breach-telemetry">
         <section class="breach-timer-box" aria-label="Breach timer">
@@ -57,6 +57,18 @@
       </div>
       <footer class="breach-footer"><span>PROTOCOL / BREACH</span><span id="breach-footer-status">AWAITING INPUT</span><span>AUTHORIZATION REQUIRED</span></footer>
     </div>
+    <section id="breach-outcome" role="status" aria-live="assertive" aria-atomic="true" tabindex="-1" hidden>
+      <div class="breach-outcome-frame">
+        <div class="breach-outcome-header"><span>BREACH PROTOCOL</span><span>ACCESS CONTROL</span></div>
+        <div class="breach-outcome-body">
+          <p id="breach-outcome-code"></p>
+          <h2 id="breach-outcome-title"></h2>
+          <p id="breach-outcome-detail"></p>
+        </div>
+        <div class="breach-outcome-footer"><span id="breach-outcome-next"></span><span>TERMINAL RESPONSE</span></div>
+        <div class="breach-outcome-track" aria-hidden="true"><div></div></div>
+      </div>
+    </section>
     <noscript><p class="breach-noscript">JavaScript is required to unlock this interface.</p></noscript>
   </section>
 

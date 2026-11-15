@@ -6,6 +6,47 @@ const BREACH_PASSWORD = Object.freeze({
 });
 const BREACH_BOARDS = [{"id":"RMM-01","size":6,"capacity":14,"seconds":60,"cells":["55","FF","7A","BD","55","7A","55","FF","FF","7A","7A","E9","7A","BD","E9","55","FF","BD","E9","BD","55","7A","BD","55","FF","BD","FF","7A","7A","1C","7A","1C","1C","55","55","FF"],"targets":[["55","55","FF"],["FF","55","55","7A"],["55","7A","55"],["55","55","E9","1C"],["E9","1C","7A","55"]]},{"id":"RMM-02","size":6,"capacity":14,"seconds":60,"cells":["55","E9","55","1C","FF","BD","FF","7A","BD","FF","FF","E9","55","55","FF","7A","E9","FF","BD","BD","E9","7A","55","FF","FF","7A","BD","1C","E9","FF","55","55","E9","7A","FF","E9"],"targets":[["55","BD","BD"],["BD","E9","55","FF"],["55","FF","FF"],["FF","E9","FF","1C"],["FF","1C","FF","FF"]]},{"id":"RMM-03","size":6,"capacity":14,"seconds":60,"cells":["BD","E9","FF","FF","7A","E9","1C","BD","E9","55","1C","7A","BD","1C","BD","FF","BD","E9","1C","55","7A","FF","1C","E9","1C","BD","FF","1C","1C","BD","E9","1C","BD","FF","1C","7A"],"targets":[["E9","BD","1C"],["1C","7A","FF","E9"],["FF","E9","BD"],["BD","55","1C","E9"],["1C","E9","1C","1C"]]},{"id":"RMM-04","size":6,"capacity":14,"seconds":60,"cells":["BD","BD","FF","1C","55","BD","1C","55","E9","1C","1C","7A","E9","7A","7A","E9","55","7A","FF","FF","BD","7A","55","1C","BD","FF","FF","E9","BD","E9","55","FF","E9","1C","1C","1C"],"targets":[["FF","7A","7A"],["7A","E9","FF","7A"],["FF","7A","E9"],["E9","1C","1C","55"],["1C","55","BD","E9"]]},{"id":"RMM-05","size":6,"capacity":14,"seconds":60,"cells":["1C","E9","55","E9","FF","1C","BD","BD","BD","7A","7A","BD","E9","1C","BD","7A","7A","7A","E9","BD","FF","55","E9","1C","55","FF","1C","1C","7A","1C","BD","1C","7A","7A","FF","55"],"targets":[["1C","BD","7A"],["7A","7A","BD","1C"],["BD","1C","1C"],["1C","7A","7A","1C"],["7A","1C","FF","1C"]]},{"id":"RMM-06","size":6,"capacity":14,"seconds":60,"cells":["E9","E9","BD","FF","1C","FF","1C","FF","7A","7A","55","BD","55","55","7A","55","1C","BD","55","55","7A","7A","FF","BD","BD","7A","E9","BD","1C","7A","BD","1C","E9","E9","55","FF"],"targets":[["1C","1C","7A"],["7A","E9","BD","7A"],["BD","7A","BD"],["BD","FF","55","55"],["55","55","7A","55"]]},{"id":"RMM-07","size":6,"capacity":14,"seconds":60,"cells":["1C","E9","7A","BD","1C","FF","55","E9","E9","BD","E9","FF","55","55","BD","E9","FF","E9","BD","BD","55","E9","BD","BD","7A","FF","1C","BD","E9","7A","BD","1C","7A","1C","E9","7A"],"targets":[["BD","E9","BD"],["BD","7A","1C","E9"],["1C","E9","7A"],["7A","FF","E9","E9"],["E9","E9","1C","7A"]]},{"id":"RMM-08","size":6,"capacity":14,"seconds":60,"cells":["FF","7A","FF","1C","BD","1C","BD","E9","55","FF","7A","BD","FF","E9","7A","BD","7A","1C","E9","55","1C","1C","FF","1C","1C","7A","1C","55","FF","E9","E9","55","1C","E9","E9","55"],"targets":[["FF","7A","E9"],["E9","55","FF","7A"],["FF","7A","1C"],["1C","55","E9","FF"],["E9","FF","E9","1C"]]},{"id":"RMM-09","size":6,"capacity":14,"seconds":60,"cells":["BD","FF","BD","1C","1C","1C","1C","FF","1C","E9","55","FF","BD","1C","1C","BD","FF","E9","55","55","7A","1C","1C","BD","1C","1C","55","FF","BD","E9","7A","FF","BD","BD","FF","1C"],"targets":[["1C","1C","7A"],["7A","1C","55","1C"],["55","1C","55"],["55","1C","1C","1C"],["1C","1C","FF","FF"]]},{"id":"RMM-10","size":6,"capacity":14,"seconds":60,"cells":["FF","FF","55","E9","1C","7A","1C","55","BD","55","BD","FF","1C","FF","BD","1C","FF","55","E9","E9","7A","55","E9","BD","E9","7A","FF","BD","FF","7A","1C","7A","FF","7A","1C","E9"],"targets":[["1C","FF","1C"],["1C","E9","7A","FF"],["7A","FF","55"],["55","BD","FF","7A"],["FF","7A","E9","BD"]]},{"id":"RMM-11","size":6,"capacity":14,"seconds":60,"cells":["E9","7A","FF","7A","1C","FF","BD","7A","7A","1C","E9","1C","BD","7A","FF","BD","55","55","BD","7A","FF","FF","FF","BD","1C","BD","BD","55","55","BD","1C","7A","1C","55","55","55"],"targets":[["1C","FF","FF"],["FF","7A","E9","1C"],["E9","1C","55"],["55","1C","1C","BD"],["1C","BD","BD","BD"]]},{"id":"RMM-12","size":6,"capacity":14,"seconds":60,"cells":["1C","7A","7A","BD","1C","55","7A","7A","E9","1C","1C","7A","FF","FF","55","E9","E9","FF","BD","1C","1C","FF","1C","FF","FF","55","E9","1C","BD","FF","7A","FF","E9","1C","E9","1C"],"targets":[["BD","1C","FF"],["FF","1C","E9","BD"],["E9","BD","E9"],["E9","7A","55","FF"],["55","FF","1C","55"]]},{"id":"RMM-13","size":6,"capacity":14,"seconds":60,"cells":["1C","E9","E9","7A","1C","FF","7A","1C","E9","BD","55","E9","E9","55","E9","7A","FF","1C","7A","7A","E9","BD","FF","BD","FF","FF","7A","FF","FF","55","55","7A","E9","BD","7A","1C"],"targets":[["1C","E9","7A"],["7A","BD","55","FF"],["55","FF","55"],["55","1C","7A","FF"],["7A","FF","7A","E9"]]},{"id":"RMM-14","size":6,"capacity":14,"seconds":60,"cells":["55","FF","1C","7A","BD","55","BD","55","1C","55","1C","BD","1C","E9","55","1C","BD","55","1C","FF","BD","1C","E9","55","55","7A","E9","BD","FF","E9","1C","E9","1C","1C","FF","1C"],"targets":[["55","1C","E9"],["E9","1C","BD","1C"],["BD","1C","55"],["55","55","BD","55"],["BD","55","1C","BD"]]},{"id":"RMM-15","size":6,"capacity":14,"seconds":60,"cells":["1C","7A","1C","BD","7A","1C","E9","BD","E9","55","BD","FF","55","55","E9","1C","BD","1C","E9","1C","BD","1C","E9","FF","BD","7A","BD","BD","FF","FF","1C","55","55","BD","E9","E9"],"targets":[["1C","1C","BD"],["BD","1C","1C","FF"],["1C","FF","BD"],["BD","E9","55","BD"],["55","BD","1C","FF"]]},{"id":"RMM-16","size":6,"capacity":14,"seconds":60,"cells":["55","7A","BD","7A","E9","7A","E9","FF","E9","1C","1C","E9","E9","BD","55","E9","BD","55","E9","7A","FF","FF","1C","55","BD","1C","FF","E9","55","FF","BD","E9","1C","1C","1C","BD"],"targets":[["55","E9","BD"],["BD","7A","55","7A"],["55","7A","BD"],["BD","FF","FF","1C"],["FF","1C","1C","1C"]]},{"id":"RMM-17","size":6,"capacity":14,"seconds":60,"cells":["FF","55","BD","BD","BD","1C","E9","55","7A","55","1C","1C","FF","FF","BD","BD","7A","1C","1C","FF","1C","BD","BD","BD","FF","BD","7A","7A","E9","FF","FF","FF","FF","55","55","55"],"targets":[["BD","1C","7A"],["7A","BD","55","FF"],["55","FF","BD"],["BD","55","1C","1C"],["1C","1C","FF","FF"]]},{"id":"RMM-18","size":6,"capacity":14,"seconds":60,"cells":["7A","E9","FF","BD","1C","E9","E9","E9","55","7A","55","1C","1C","E9","BD","BD","55","55","55","BD","FF","FF","FF","55","FF","55","7A","FF","BD","55","FF","55","7A","FF","FF","55"],"targets":[["E9","55","55"],["55","1C","55","1C"],["55","1C","7A"],["7A","55","FF","FF"],["FF","FF","55","BD"]]},{"id":"RMM-19","size":6,"capacity":14,"seconds":60,"cells":["FF","7A","1C","7A","FF","BD","1C","E9","1C","55","7A","E9","1C","E9","E9","7A","55","BD","1C","E9","BD","E9","E9","7A","1C","55","1C","BD","7A","BD","FF","1C","FF","FF","55","FF"],"targets":[["7A","1C","FF"],["FF","E9","7A","E9"],["7A","E9","1C"],["1C","1C","E9","55"],["E9","55","1C","FF"]]},{"id":"RMM-20","size":6,"capacity":14,"seconds":60,"cells":["BD","FF","BD","1C","55","7A","FF","BD","55","1C","55","55","55","55","FF","FF","7A","55","BD","FF","7A","1C","7A","E9","55","FF","FF","E9","55","FF","BD","BD","BD","55","1C","55"],"targets":[["FF","FF","E9"],["E9","1C","BD","BD"],["BD","BD","1C"],["1C","1C","55","7A"],["55","7A","55","55"]]}];
 const BREACH_NAMES = ['ACCESS_NODE', 'DECRYPT_INDEX', 'OPEN_CHANNEL', 'OVERRIDE_ICE', 'RELEASE_LOCK'];
+const BREACH_RESULT_MS = 1500;
+
+class BreachResultPresenter {
+  constructor(parts, schedule = (callback, delay) => setTimeout(callback, delay), cancel = timer => clearTimeout(timer)) {
+    this.parts = parts;
+    this.schedule = schedule;
+    this.cancel = cancel;
+    this.current = null;
+  }
+  get active() { return this.current !== null; }
+  present(kind, detail) {
+    if (kind === 'denied' && this.current?.kind === 'granted') return Promise.resolve(false);
+    if (this.current?.kind === kind) {
+      this.parts.detail.textContent = detail;
+      return this.current.promise;
+    }
+    if (this.current) { this.cancel(this.current.timer); this.current.resolve(false); }
+    const granted = kind === 'granted';
+    const {screen, shell, title, code, detail: detailElement, next} = this.parts;
+    const current = {kind};
+    current.promise = new Promise(resolve => { current.resolve = resolve; });
+    this.current = current;
+    shell.inert = true;
+    screen.dataset.state = kind;
+    title.textContent = granted ? 'ACCESS GRANTED' : 'ACCESS DENIED';
+    code.textContent = granted ? '/ACCESS_REQUEST_SUCCESS' : '/ACCESS_REQUEST_FAILED';
+    detailElement.textContent = detail;
+    next.textContent = granted ? 'OPENING INTERFACE' : 'RETURNING TO TERMINAL';
+    screen.style.setProperty('--breach-result-duration', `${BREACH_RESULT_MS}ms`);
+    screen.hidden = false;
+    screen.focus({preventScroll: true});
+    current.timer = this.schedule(() => {
+      if (this.current !== current) return;
+      screen.hidden = true;
+      shell.inert = false;
+      this.current = null;
+      current.resolve(true);
+    }, BREACH_RESULT_MS);
+    return current.promise;
+  }
+}
 
 function breachSequenceProgress(buffer, sequence) {
   for (let start = 0; start <= buffer.length - sequence.length; start++) {
@@ -98,17 +139,23 @@ function waitForBreachUnlock() {
     const passwordField = find('password');
     const passwordButton = find('password-submit');
     const passwordStatus = find('password-status');
+    const resultScreen = new BreachResultPresenter({
+      screen: find('outcome'), shell: root.querySelector('.breach-shell'),
+      title: find('outcome-title'), code: find('outcome-code'),
+      detail: find('outcome-detail'), next: find('outcome-next'),
+    });
     let boardIndex = Math.floor(Math.random() * BREACH_BOARDS.length);
     let bag = [];
     let puzzle;
     let frame = 0;
     let unlocked = false;
     let passwordBusy = false;
+    let failurePresented = false;
     const cleanup = new AbortController();
     const listen = (element, type, callback) => element.addEventListener(type, callback, {signal: cleanup.signal});
 
     function stopClock() { cancelAnimationFrame(frame); frame = 0; }
-    function unlock() {
+    async function unlock(detail = 'ACCESS KEY VERIFIED') {
       if (unlocked) return;
       unlocked = true;
       stopClock();
@@ -118,19 +165,18 @@ function waitForBreachUnlock() {
       passwordField.value = '';
       for (const button of root.querySelectorAll('button')) button.disabled = true;
       passwordField.disabled = true;
-      setTimeout(() => {
-        cleanup.abort();
-        root.remove();
-        document.body.classList.remove('breach-locked');
-        for (const element of document.querySelectorAll('[data-breach-protected]')) {
-          element.hidden = false;
-          element.inert = false;
-          element.removeAttribute('data-breach-protected');
-        }
-        document.title = 'Connect';
-        resolve();
-        requestAnimationFrame(() => document.querySelector('#server')?.focus({preventScroll: true}));
-      }, 800);
+      await resultScreen.present('granted', detail);
+      cleanup.abort();
+      root.remove();
+      document.body.classList.remove('breach-locked');
+      for (const element of document.querySelectorAll('[data-breach-protected]')) {
+        element.hidden = false;
+        element.inert = false;
+        element.removeAttribute('data-breach-protected');
+      }
+      document.title = 'Connect';
+      resolve();
+      requestAnimationFrame(() => document.querySelector('#server')?.focus({preventScroll: true}));
     }
     function paintClock() {
       const seconds = puzzle.remaining() / 1000;
@@ -149,7 +195,6 @@ function waitForBreachUnlock() {
       const progress = puzzle.progress();
       const complete = puzzle.completed();
       const available = puzzle.available();
-      find('board-id').textContent = `MATRIX ${String(boardIndex + 1).padStart(2, '0')} / ${String(BREACH_BOARDS.length).padStart(2, '0')}`;
       find('buffer-count').textContent = `${String(puzzle.buffer.length).padStart(2, '0')} / ${puzzle.board.capacity}`;
       find('complete-count').textContent = `${complete} / ${puzzle.board.targets.length}`;
       find('axis').textContent = `${puzzle.axis.toUpperCase()} ${String(puzzle.line + 1).padStart(2, '0')}`;
@@ -184,9 +229,14 @@ function waitForBreachUnlock() {
         stopClock();
         status.textContent = `${puzzle.reason}. ${complete}/5 uploaded. Reset the buffer or try a new matrix.`;
         find('retry').textContent = 'RETRY BREACH';
-        find('retry').focus({preventScroll: true});
+        if (!failurePresented && !unlocked) {
+          failurePresented = true;
+          resultScreen.present('denied', puzzle.reason).then(completed => {
+            if (completed && !unlocked && puzzle.result === 'failed') find('retry').focus({preventScroll: true});
+          });
+        }
       } else if (puzzle.result === 'won') {
-        unlock();
+        unlock('ALL FIVE SEQUENCES UPLOADED');
       } else {
         find('retry').textContent = 'RESET BUFFER';
         status.textContent = puzzle.started === null ? 'Select a code in the first row to begin.' : `${complete}/5 uploaded. Select from the highlighted ${puzzle.axis}.`;
@@ -194,6 +244,7 @@ function waitForBreachUnlock() {
     }
     function loadBoard() {
       stopClock();
+      failurePresented = false;
       puzzle = new BreachPuzzle(BREACH_BOARDS[boardIndex]);
       matrix.replaceChildren(); buffer.replaceChildren(); sequences.replaceChildren();
       for (let index = 0; index < puzzle.board.cells.length; index++) {
@@ -217,7 +268,7 @@ function waitForBreachUnlock() {
       render();
     }
     listen(matrix, 'click', event => {
-      if (unlocked) return;
+      if (unlocked || resultScreen.active) return;
       const button = event.target.closest('button[data-cell]');
       if (!button || !puzzle.select(Number(button.dataset.cell))) return;
       render();
@@ -227,6 +278,7 @@ function waitForBreachUnlock() {
       }
     });
     listen(matrix, 'keydown', event => {
+      if (unlocked || resultScreen.active) return;
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const available = puzzle.available();
@@ -236,9 +288,9 @@ function waitForBreachUnlock() {
       for (const button of matrix.children) button.tabIndex = Number(button.dataset.cell) === available[next] ? 0 : -1;
       matrix.children[available[next]].focus({preventScroll: true});
     });
-    listen(find('retry'), 'click', () => { if (!unlocked) loadBoard(); });
+    listen(find('retry'), 'click', () => { if (!unlocked && !resultScreen.active) loadBoard(); });
     listen(find('new'), 'click', () => {
-      if (unlocked) return;
+      if (unlocked || resultScreen.active) return;
       if (!bag.length) {
         bag = BREACH_BOARDS.map((_, index) => index).filter(index => index !== boardIndex);
         for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
@@ -247,21 +299,26 @@ function waitForBreachUnlock() {
     });
     listen(passwordForm, 'submit', async event => {
       event.preventDefault();
-      if (passwordBusy || unlocked) return;
+      if (passwordBusy || unlocked || resultScreen.active) return;
       if (!passwordField.value) { passwordStatus.textContent = 'Enter the access key.'; passwordField.focus(); return; }
       passwordBusy = true; passwordButton.disabled = true; passwordField.disabled = true;
       passwordButton.textContent = 'VERIFYING'; passwordStatus.textContent = '';
       let candidate = passwordField.value; passwordField.value = '';
       try {
         const checking = breachVerifyPassword(candidate); candidate = '';
-        if (await checking) unlock();
-        else if (!unlocked) { passwordStatus.textContent = 'ACCESS DENIED. Key not recognized.'; passwordField.setAttribute('aria-invalid', 'true'); }
+        if (await checking) await unlock();
+        else if (!unlocked) {
+          passwordStatus.textContent = 'ACCESS DENIED. Key not recognized.';
+          passwordField.setAttribute('aria-invalid', 'true');
+          await resultScreen.present('denied', 'KEY NOT RECOGNIZED');
+        }
       } catch (error) {
         if (!unlocked) passwordStatus.textContent = `${error.message} The breach puzzle is still available.`;
       } finally {
         candidate = ''; passwordBusy = false;
         if (!unlocked) {
-          passwordButton.disabled = false; passwordField.disabled = false; passwordButton.textContent = 'UNLOCK'; passwordField.focus({preventScroll: true});
+          passwordButton.disabled = false; passwordField.disabled = false; passwordButton.textContent = 'UNLOCK';
+          (puzzle.result === 'failed' ? find('retry') : passwordField).focus({preventScroll: true});
         }
       }
     });
