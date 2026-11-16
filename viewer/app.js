@@ -19,8 +19,8 @@ class BreachResultPresenter {
   present(kind, detail, options = {}) {
     if (kind === 'denied' && this.current?.kind === 'granted') return Promise.resolve(false);
     if (this.current?.kind === kind) {
-      this.parts.detail.textContent = detail;
-      if(options.next)this.parts.next.textContent=options.next;
+      if(this.parts.detail)this.parts.detail.textContent='';
+      if(this.parts.next)this.parts.next.textContent='';
       if(this.parts.protocol&&options.protocol)this.parts.protocol.textContent=options.protocol;
       return this.current.promise;
     }
@@ -33,9 +33,9 @@ class BreachResultPresenter {
     shell.inert = true;
     screen.dataset.state = kind;
     title.textContent = granted ? 'ACCESS GRANTED' : 'ACCESS DENIED';
-    code.textContent = granted ? '/ACCESS_REQUEST_SUCCESS' : '/ACCESS_REQUEST_FAILED';
-    detailElement.textContent = detail;
-    next.textContent = options.next || (granted ? 'OPENING INTERFACE' : 'RETURNING TO TERMINAL');
+    if(code)code.textContent='';
+    if(detailElement)detailElement.textContent='';
+    if(next)next.textContent='';
     if(this.parts.protocol)this.parts.protocol.textContent=options.protocol || 'BREACH PROTOCOL';
     screen.style.setProperty('--breach-result-duration', `${BREACH_RESULT_MS}ms`);
     screen.hidden = false;
@@ -209,7 +209,7 @@ function trace(masks,level=LEVEL){
 
 function mountCircuitChallenge(root,{onResult,canPlay,signal}) {
   const find=id=>root.querySelector('#'+id);
-  const board=find('board'),feedback=find('feedback'),launch=find('launch');
+  const board=find('board'),launch=find('launch');
   const deck=new CircuitDeck(LEVELS.length,Math.floor(Math.random()*LEVELS.length));
   let first=true,level,state,timer=null,generation=0,focused=0,finished=false;
   const listen=(element,type,callback)=>element.addEventListener(type,callback,{signal});
@@ -228,24 +228,22 @@ function mountCircuitChallenge(root,{onResult,canPlay,signal}) {
         const index=row*level.size+col,mask=state.masks[index],relay=level.relays.indexOf(index),powered=state.path.includes(index);
         const endpoint=index===level.start?'IN':index===level.exit?'OUT':'';
         const ports=PORTS.map((port,i)=>mask&port?['north','east','south','west'][i]:null).filter(Boolean).join(' and ');
-        const label=`${coordinate(index,level)}. ${endpoint?endpoint+'. ':''}${relay>=0?'Relay '+String.fromCharCode(65+relay)+'. ':''}${mask?'Open '+ports+'. Rotate tile.':'Offline sector.'}`;
+        const label=`${coordinate(index,level)}. ${endpoint?endpoint+'. ':''}${relay>=0?'Relay '+String.fromCharCode(65+relay)+'. ':''}${mask?'Open '+ports+'.':'Offline sector.'}`;
         html+=`<button type="button" id="tile-${index}" data-tile="${index}" data-endpoint="${endpoint}" class="tile${powered?' powered':''}${index===level.start?' source':''}${index===level.exit?' exit':''}${relay>=0?' relay-tile':''}${!mask?' offline':''}${state.failure===index?' failure':''}" aria-label="${label}" tabindex="${index===focused?0:-1}" ${!mask||['won','failed'].includes(state.status)||(state.status==='running'&&powered)?'disabled':''}>${svg(mask,index)}</button>`;
       }
     }
     board.innerHTML=html;
-    find('phase').textContent={planning:'PLANNING',running:'PULSE ACTIVE',failed:'CONNECTION LOST',won:'RETRY AUTHORIZED'}[state.status];
-    for(let i=0;i<3;i++){const relay=find('relay-'+String.fromCharCode(97+i));relay.classList.toggle('crossed',state.relays>i);relay.setAttribute('aria-label',`Relay ${String.fromCharCode(65+i)} ${state.relays>i?'crossed':'pending'}`);}
-    feedback.className='feedback'+(state.status==='failed'?' failed':state.status==='won'?' won':'');feedback.textContent=state.message;
-    launch.disabled=state.status!=='planning';launch.textContent=state.status==='running'?'Pulse running':state.status==='won'?'Retry authorized':state.status==='failed'?'Connection lost':'Send pulse';
+    find('phase').textContent={planning:'PLANNING',running:'PULSE ACTIVE',failed:'CONNECTION LOST',won:'CIRCUIT BREACHED'}[state.status];
+    launch.disabled=state.status!=='planning';launch.textContent=state.status==='running'?'Pulse running':state.status==='won'?'Circuit breached':state.status==='failed'?'Connection lost':'Send pulse';
     find('entry-label').textContent=`IN → ${coordinate(level.start,level)}`;find('exit-label').textContent=`${coordinate(level.exit,level)} → OUT`;
     if(active?.startsWith('tile-')){const previous=root.querySelector('#'+active);if(previous&&!previous.disabled)previous.focus({preventScroll:true});}
     if(!finished&&['failed','won'].includes(state.status)){
-      finished=true;stop();onResult(state.status==='won',state.status==='won'?'CIRCUIT RESTORED. BREACH RETRY AUTHORIZED.':state.message);
+      finished=true;stop();onResult(state.status==='won','');
     }
   }
   function rotateAt(index,reverse=false){
     if(!canPlay()||finished||!turnTile(state,index,reverse?-1:1))return;
-    focused=index;state.message=`Rotated ${coordinate(index,level)}. Cross A → B → C before reaching OUT.`;render();
+    focused=index;render();
   }
   function schedule(){const ticket=generation;timer=setTimeout(()=>{
     timer=null;if(ticket!==generation||!canPlay()||state.status!=='running')return;
@@ -310,7 +308,6 @@ function waitForBreachUnlock() {
     const matrix = find('matrix');
     const buffer = find('buffer');
     const sequences = find('sequences');
-    const status = find('state');
     const passwordForm = find('password-form');
     const passwordField = find('password');
     const passwordButton = find('password-submit');
@@ -363,7 +360,7 @@ function waitForBreachUnlock() {
     function unlock(detail='ACCESS KEY VERIFIED'){
       if(unlocked||!flow.canUnlock)return;
       unlocked=true;stopClock();circuit.stop();root.dataset.result='granted';
-      status.textContent='ACCESS GRANTED. Opening interface…';find('footer-status').textContent='ACCESS GRANTED';
+      find('footer-status').textContent='ACCESS GRANTED';
       passwordField.value='';for(const button of root.querySelectorAll('button'))button.disabled=true;passwordField.disabled=true;
       return flow.unlock(detail);
     }
@@ -388,7 +385,7 @@ function waitForBreachUnlock() {
     }
     function render() {
       if(flow.stage!=='breach')return;
-      find('retry').disabled=false;find('new').disabled=false;
+      
       root.dataset.result = puzzle.result === 'failed' ? 'failed' : puzzle.result;
       const progress = puzzle.progress();
       const complete = puzzle.completed();
@@ -396,8 +393,6 @@ function waitForBreachUnlock() {
       find('buffer-count').textContent = `${String(puzzle.buffer.length).padStart(2, '0')} / ${puzzle.board.capacity}`;
       find('complete-count').textContent = `${complete} / ${puzzle.board.targets.length}`;
       find('axis').textContent = `${puzzle.axis.toUpperCase()} ${String(puzzle.line + 1).padStart(2, '0')}`;
-      find('direction').textContent = `SELECT FROM THE HIGHLIGHTED ${puzzle.axis.toUpperCase()}`;
-      find('timer-caption').textContent = puzzle.started === null ? 'STARTS ON FIRST SELECTION' : puzzle.result === 'running' ? 'BREACH IN PROGRESS' : 'BREACH ENDED';
       find('footer-status').textContent = puzzle.result === 'failed' ? 'BREACH FAILED' : puzzle.started === null ? 'AWAITING INPUT' : 'UPLOADING';
       for (const button of matrix.children) {
         const index = Number(button.dataset.cell);
@@ -425,18 +420,18 @@ function waitForBreachUnlock() {
       paintClock();
       if (puzzle.result === 'failed') {
         stopClock();
-        status.textContent = `${puzzle.reason}. ${complete}/5 uploaded. Circuit Routing is your second chance.`;
-        find('retry').textContent = 'RETRY BREACH';
+        
+        
         if (!failurePresented && !unlocked) {
           failurePresented = true;
-          find('retry').disabled=true;find('new').disabled=true;
+          
           flow.failBreach(puzzle.reason);
         }
       } else if (puzzle.result === 'won') {
         unlock('ALL FIVE SEQUENCES UPLOADED');
       } else {
-        find('retry').textContent = 'RESET BUFFER';
-        status.textContent = puzzle.started === null ? 'Select a code in the first row to begin.' : `${complete}/5 uploaded. Select from the highlighted ${puzzle.axis}.`;
+        
+        
       }
     }
     function loadBoard() {
@@ -485,11 +480,6 @@ function waitForBreachUnlock() {
       for (const button of matrix.children) button.tabIndex = Number(button.dataset.cell) === available[next] ? 0 : -1;
       matrix.children[available[next]].focus({preventScroll: true});
     });
-    listen(find('retry'), 'click', () => { if (!unlocked && flow.stage==='breach' && !resultScreen.active) loadBoard(); });
-    listen(find('new'), 'click', () => {
-      if (unlocked || flow.stage!=='breach' || resultScreen.active) return;
-      nextBoard();loadBoard();
-    });
     listen(passwordForm, 'submit', async event => {
       event.preventDefault();
       if (passwordBusy || unlocked || flow.stage!=='breach' || resultScreen.active) return;
@@ -501,17 +491,17 @@ function waitForBreachUnlock() {
         const checking = breachVerifyPassword(candidate); candidate = '';
         if (await checking) await unlock();
         else if (!unlocked && flow.stage==='breach') {
-          passwordStatus.textContent = 'ACCESS DENIED. Key not recognized.';
+          passwordStatus.textContent = 'ACCESS DENIED';
           passwordField.setAttribute('aria-invalid', 'true');
           await resultScreen.present('denied', 'KEY NOT RECOGNIZED');
         }
       } catch (error) {
-        if (!unlocked) passwordStatus.textContent = `${error.message} The breach puzzle is still available.`;
+        if (!unlocked) passwordStatus.textContent = 'VERIFICATION UNAVAILABLE';
       } finally {
         candidate = ''; passwordBusy = false;
         if (!unlocked && flow.stage==='breach') {
           passwordButton.disabled = false; passwordField.disabled = false; passwordButton.textContent = 'UNLOCK';
-          (puzzle.result === 'failed' ? find('retry') : passwordField).focus({preventScroll: true});
+          passwordField.focus({preventScroll: true});
         }
       }
     });

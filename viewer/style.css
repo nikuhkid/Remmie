@@ -262,3 +262,14 @@ body.breach-locked:has(#breach-outcome:not([hidden])) { overflow: hidden; }
 #breach-gate #breach-circuit #phase{flex-shrink:0}
 #breach-gate #breach-circuit .title-row>div{min-width:0}
 #breach-gate #breach-circuit .controls{align-self:start}
+
+/* Minimal entrance: game state and controls only. */
+#breach-gate .breach-password-zone{display:block;margin-top:24px}
+#breach-gate .breach-timer-box{align-content:start}
+#breach-gate #breach-circuit .layout{display:block;max-width:500px;margin-inline:auto}
+#breach-gate #breach-circuit .board-section{max-width:none}
+#breach-gate #breach-circuit .controls{display:block;margin-top:16px}
+#breach-gate #breach-circuit #launch{width:100%;min-height:44px}
+#breach-gate #breach-circuit .title-row{margin-top:20px;margin-bottom:20px}
+#breach-gate #breach-circuit h1{min-width:0}
+@media(max-width:480px){#breach-gate .breach-dim{display:inline}#breach-gate #breach-circuit .masthead{font-size:10px}#breach-gate #breach-circuit h1{font-size:23px}}

@@ -3,52 +3,42 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="referrer" content="no-referrer"><title>Breach Protocol</title>
-  <link rel="stylesheet" href="./style.css?v=breach-gate-4">
-  <script type="module" src="./app.js?v=breach-gate-4"></script>
+  <link rel="stylesheet" href="./style.css?v=breach-gate-5">
+  <script type="module" src="./app.js?v=breach-gate-5"></script>
 </head>
 <body class="breach-locked">
   <section id="breach-gate" aria-labelledby="breach-title">
     <div class="breach-stages">
     <div class="breach-shell">
       <header class="breach-masthead">
-        <span>ACCESS TERMINAL <span class="breach-dim">// LOCAL INTERFACE</span></span>
+        <span>ACCESS TERMINAL <span class="breach-dim">// MATRIX EXPOSED</span></span>
         <span class="breach-terminal-id">NET / 77.014</span>
       </header>
       <div class="breach-title-row">
-        <div><p class="breach-eyebrow">CONNECTION RESTRICTED</p><h1 id="breach-title">BREACH PROTOCOL</h1></div>
-        <div class="breach-board-meta">5 SEQUENCES / ONE BUFFER</div>
+        <div><h1 id="breach-title">BREACH PROTOCOL</h1></div>
       </div>
       <div class="breach-telemetry">
         <section class="breach-timer-box" aria-label="Breach timer">
           <h2>BREACH TIME REMAINING</h2>
           <div id="breach-timer" role="timer" aria-live="off">60.00</div>
           <div class="breach-time-track"><div id="breach-time-bar"></div></div>
-          <span id="breach-timer-caption">STARTS ON FIRST SELECTION</span>
         </section>
         <section class="breach-buffer-box" aria-label="Selection buffer">
           <div class="breach-panel-title"><h2>BUFFER</h2><span id="breach-buffer-count">00 / 14</span></div>
           <div id="breach-buffer" aria-label="Selected hexadecimal codes"></div>
-          <p id="breach-state" role="status" aria-live="polite">Select a code in the first row to begin.</p>
         </section>
       </div>
       <div class="breach-game">
         <section class="breach-matrix-panel" aria-labelledby="breach-matrix-title">
           <div class="breach-panel-title"><h2 id="breach-matrix-title">CODE MATRIX</h2><span id="breach-axis">ROW 01</span></div>
-          <div id="breach-matrix" role="group" aria-label="Code matrix. Start in the first row, then alternate column and row."></div>
-          <div class="breach-matrix-footer"><span id="breach-direction">SELECT FROM THE HIGHLIGHTED ROW</span><span>6 × 6</span></div>
+          <div id="breach-matrix" role="group" aria-label="Code matrix"></div>
         </section>
         <section class="breach-sequences-panel" aria-labelledby="breach-sequences-title">
           <div class="breach-panel-title"><h2 id="breach-sequences-title">SEQUENCES REQUIRED TO UPLOAD</h2><span id="breach-complete-count">0 / 5</span></div>
           <ol id="breach-sequences"></ol>
-          <p class="breach-requirement">ALL FIVE SEQUENCES MUST BE UPLOADED.</p>
         </section>
       </div>
-      <div class="breach-actions">
-        <div class="breach-game-actions"><button id="breach-retry" type="button">RESET BUFFER</button><button id="breach-new" type="button">NEW MATRIX</button></div>
-        <details id="breach-help"><summary>HOW TO BREACH</summary><p>Start in the first row. Your next selection must be in that code’s column, then its row, alternating each turn. Each cell can be used once. Match all five sequences anywhere in the same buffer; they can overlap. You have 14 slots and 60 seconds from your first selection. Arrow keys move between available codes; Enter or Space selects. You can reset or change the matrix before failure. A failed breach triggers one Circuit Routing attempt.</p></details>
-      </div>
       <div class="breach-password-zone">
-        <div><h2>ALTERNATIVE ACCESS</h2><p>Already have the access key?</p></div>
         <form id="breach-password-form">
           <label class="breach-sr-only" for="breach-password">Page access password</label>
           <input id="breach-password" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="256" placeholder="Enter access key" aria-describedby="breach-password-status">
@@ -59,40 +49,23 @@
       <footer class="breach-footer"><span>PROTOCOL / BREACH</span><span id="breach-footer-status">AWAITING INPUT</span><span>AUTHORIZATION REQUIRED</span></footer>
     </div>
     <section id="breach-circuit" aria-labelledby="circuit-title" hidden><div class="shell">
-    <header class="masthead"><span>CIRCUIT BREACH / HARD</span><span>SECOND CHANCE</span></header>
-    <div class="title-row"><div><p class="eyebrow">RESTORE THE CIRCUIT TO RETRY BREACH PROTOCOL.</p><h1 id="circuit-title" tabindex="-1">CIRCUIT ROUTING</h1></div><span id="phase">PLANNING</span></div>
-    <div class="layout">
-      <section class="board-section" aria-label="Circuit puzzle">
-        <div class="board-heading"><span id="entry-label"></span><span id="exit-label"></span></div>
-        <div id="board-scroll" aria-label="Scrollable circuit board"><div id="board" role="group" aria-label="Eight by eight circuit. Rotate tiles to connect the entry through relays A, B and C to the exit."></div></div>
-        <p class="board-help">Click: rotate clockwise · Shift+click or right-click: reverse</p>
-        <p class="phone-help">Scroll the board sideways to see every column.</p>
-      </section>
-      <aside class="sidebar">
-        <h2>REQUIRED ROUTE</h2>
-        <div class="relay-line"><span class="endpoint">IN</span><span aria-hidden="true">→</span><span id="relay-a" class="relay">A</span><span aria-hidden="true">→</span><span id="relay-b" class="relay">B</span><span aria-hidden="true">→</span><span id="relay-c" class="relay">C</span><span aria-hidden="true">→</span><span class="endpoint">OUT</span></div>
-        <p>Every relay must be crossed <strong>in order</strong>. Reaching OUT early fails the attempt.</p>
-        <h2>HOW IT WORKS</h2>
-        <p>Plan for as long as you need. After launch, the pulse moves every <strong>0.5 seconds</strong>. Powered tiles lock; tiles ahead can still turn.</p>
-        <p class="legend"><span class="legend-source">IN / OUT</span> entry and exit<br><span class="legend-relay">A B C</span> mandatory relays<br><span class="legend-offline">×</span> offline sectors</p>
-        <div class="controls"><button id="launch" class="primary" type="button">Send pulse</button></div>
-        <p class="small">One pulse attempt. Success restores Breach Protocol. Failure ends access and redirects to Google.</p>
-        <details id="strategy"><summary>Strategy hint</summary><p>Trace backwards from OUT as well as forwards from IN. A straight tile can only carry a signal across; a corner always turns it. At each relay, check both neighbouring connections before committing.</p></details>
-      </aside>
-    </div>
-    <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
-    <footer><span>8 × 8 CIRCUIT</span><span>ARROWS MOVE FOCUS · ENTER ROTATES · SHIFT+ENTER REVERSES</span></footer>
+      <header class="masthead"><span>Access Terminal // Circuit backup</span></header>
+      <div class="title-row"><h1 id="circuit-title" tabindex="-1">CIRCUIT ROUTING</h1><span id="phase">PLANNING</span></div>
+      <div class="layout">
+        <section class="board-section" aria-label="Circuit puzzle">
+          <div class="board-heading"><span id="entry-label"></span><span id="exit-label"></span></div>
+          <div id="board-scroll" aria-label="Scrollable circuit board"><div id="board" role="group" aria-label="Eight by eight circuit"></div></div>
+          <div class="controls"><button id="launch" class="primary" type="button">Send pulse</button></div>
+        </section>
+      </div>
     </div></section>
     </div>
     <section id="breach-outcome" role="status" aria-live="assertive" aria-atomic="true" tabindex="-1" hidden>
       <div class="breach-outcome-frame">
         <div class="breach-outcome-header"><span id="breach-outcome-protocol">BREACH PROTOCOL</span><span>ACCESS CONTROL</span></div>
         <div class="breach-outcome-body">
-          <p id="breach-outcome-code"></p>
           <h2 id="breach-outcome-title"></h2>
-          <p id="breach-outcome-detail"></p>
         </div>
-        <div class="breach-outcome-footer"><span id="breach-outcome-next"></span><span>TERMINAL RESPONSE</span></div>
         <div class="breach-outcome-track" aria-hidden="true"><div></div></div>
       </div>
     </section>
