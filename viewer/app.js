@@ -668,7 +668,12 @@ function desktopControls(session) {
   mobileUI?.refresh(session, connected, inputAvailable);
 }
 
+function syncRelativeCursor(session, enabled = document.pointerLockElement === video) {
+  if (session?.features?.relativeCursor) send(session, {type: "relative-cursor", enabled});
+}
+
 function stopCapture(session) {
+  syncRelativeCursor(session, false);
   captureVersion++;
   mouseCaptureWanted = false;
   captureFailure = null;
@@ -1340,6 +1345,7 @@ async function connect(password, intent = null, previous = null) {
         session.canInput = message.input === true;
         session.permissions=message.permissions || {};
         session.features = message.features || {};
+        syncRelativeCursor(session);
         session.audioState = "starting";
         updateAudio(session);
         playAudio(session);
@@ -1395,6 +1401,7 @@ async function connect(password, intent = null, previous = null) {
       } else if (message?.type === "handover-active" && session.handoverFrom) {
         const old = session.handoverFrom;
         session.handoverFrom = null;
+        syncRelativeCursor(session);
         session.fileToken = message.fileToken;
         profileSelect.value=message.profile || "general";
         session.download = old.download;
@@ -1829,6 +1836,7 @@ document.addEventListener("pointerlockchange", () => {
   releaseInput(active);
   const locked = document.pointerLockElement === video;
   if (locked && !mouseCaptureWanted) { document.exitPointerLock(); return; }
+  syncRelativeCursor(inputSession(), locked);
   relativeButton.setAttribute("aria-pressed", String(locked));
   relativeButton.textContent = locked ? "Release mouse" : "Relative mouse";
   if (locked) {
