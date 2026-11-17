@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="referrer" content="no-referrer"><title>Breach Protocol</title>
-  <link rel="stylesheet" href="./style.css?v=relative-cursor-1">
-  <script type="module" src="./app.js?v=relative-cursor-1"></script>
+  <link rel="stylesheet" href="./style.css?v=local-relay-1">
+  <script type="module" src="./app.js?v=local-relay-1"></script>
 </head>
 <body class="breach-locked">
   <section id="breach-gate" aria-labelledby="breach-title">
@@ -76,6 +76,8 @@
     <form id="connect-form">
       <label for="server">Server</label>
       <input id="server" type="text" required maxlength="2048" autocomplete="url" inputmode="url" autocapitalize="none" spellcheck="false">
+<label for="connection-method">Connection method</label><select id="connection-method"><option value="auto">Automatic fallback</option><option value="direct" selected>Existing connection</option><option value="https-poll">HTTPS polling</option><option value="https-long-poll">HTTPS long polling</option><option value="https-sse">HTTPS event stream</option><option value="websocket">WebSocket</option><option value="turn-tls">TURN/TLS</option><option value="turn-tcp">TURN/TCP</option></select>
+
       <label for="password">Password</label>
       <input id="password" type="password" required maxlength="256" autocomplete="current-password">
       <button id="connect" type="submit">Connect</button>
@@ -90,6 +92,7 @@
       <p id="empty"></p>
     </div>
     <p id="status" role="status">Ready to connect.</p>
+<details id="connection-attempts" hidden><summary>Connection attempts</summary><pre id="connection-attempts-text"></pre></details>
     <span id="touch-cursor" aria-hidden="true" hidden></span>
     <button id="mobile-zoom-reset" type="button" hidden>Reset zoom · 100%</button>
     <textarea id="mobile-input-proxy" class="mobile-input-proxy" rows="1" aria-label="Remote keyboard input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" enterkeyhint="enter" tabindex="-1"></textarea>
@@ -119,7 +122,7 @@
         <button id="disconnect" type="button" disabled>Disconnect</button>
         <button id="fullscreen" type="button" disabled>Fullscreen</button>
       </div>
-      <details><summary>Session options</summary><div class="section-body">
+      <details><summary>Session options</summary><div class="section-body"><label for="remote-connection-method">Connection method</label><select id="remote-connection-method"><option value="auto">Automatic fallback</option><option value="direct" selected>Existing connection</option><option value="https-poll">HTTPS polling</option><option value="https-long-poll">HTTPS long polling</option><option value="https-sse">HTTPS event stream</option><option value="websocket">WebSocket</option><option value="turn-tls">TURN/TLS</option><option value="turn-tcp">TURN/TCP</option></select><button id="switch-connection-method" type="button" disabled>Switch method</button>
         <label for="monitor">Display</label><select id="monitor" disabled><option>Host display</option></select>
         <label><input id="scale-fit" type="checkbox" checked> Scale to fit</label>
         <label><input id="smooth-scale" type="checkbox" checked> Smooth scaling</label>
