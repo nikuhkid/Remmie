@@ -566,6 +566,11 @@ const RemmieConnections = (() => {
       });
   }
 
+  function retryPolicy(method,status,established){
+    if([409,429].includes(status))return {recover:!!established,sameMethodOnly:true};
+    return {recover:method==='direct'||![400,401,403].includes(status),sameMethodOnly:false};
+  }
+
   class Method {
     constructor(method,relay){
       if(!names[method])throw Error('Unknown connection method');
@@ -576,13 +581,23 @@ const RemmieConnections = (() => {
       const deadline=timeoutSignal(parent);
       try{
         deadline.signal.throwIfAborted();
-        if(!this.relay.key || this.relay.expires<Date.now()){
+        const authorize=async()=>{
           const auth=await this.post('authorize',{password:this.relay.password},deadline.signal);
           if(typeof auth?.key!=='string' || auth.key.length<32 || !Number.isInteger(auth.expiresIn) || auth.expiresIn<10)
             throw Error('Invalid connection authorization response');
           this.relay.key=auth.key;this.relay.expires=Date.now()+(auth.expiresIn-5)*1000;
+        };
+        if(!this.relay.key || this.relay.expires<Date.now())await authorize();
+        const request=()=>this.post('requests',{key:this.relay.key,method:'turn-tcp',operation,payload,attempt:this.id},deadline.signal);
+        let result;
+        try{result=await request();}
+        catch(error){
+          if(error.status!==401)throw error;
+          // Host restarts clear in-memory startup capabilities. Renew once;
+          // a denied password is still terminal and is never looped.
+          this.relay.key=null;this.relay.expires=0;
+          await authorize();result=await request();
         }
-        const result=await this.post('requests',{key:this.relay.key,method:'turn-tcp',operation,payload,attempt:this.id},deadline.signal);
         if(!result || !Number.isInteger(result.status) || !result.body || typeof result.body!=='object' || Array.isArray(result.body))
           throw Error('Invalid connection response');
         if(result.status!==200)throw Object.assign(Error(result.body.error || 'Connection failed'),{status:result.status});
@@ -603,7 +618,7 @@ const RemmieConnections = (() => {
       try{await cleanup.rpc('cancel',{cancelKey:this.cancelKey},deadline.signal);}catch{}finally{deadline.close();}
     }
   }
-  return {names,homeOrigin,gatewayOrigin,endpoint,Plan,Method,relayConfiguration};
+  return {names,homeOrigin,gatewayOrigin,endpoint,Plan,Method,relayConfiguration,retryPolicy};
 })();
 
 const form = document.querySelector("#connect-form");
@@ -1074,7 +1089,7 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   connectButton.disabled = false;
   disconnectButton.disabled = true;
   serverField.disabled = passwordField.disabled = false;
-  if(recover && !session.presented && desired===session.intent && session.connectionPlan.next()) {
+  if(recover && !session.presented && !session.retryCurrentOnly && desired===session.intent && session.connectionPlan.next()) {
     show('Connecting to your desktop…','connecting');
     Promise.resolve(methodCleanup).finally(()=>{if(desired===session.intent && !active)connect(session.intent.password,session.intent);});
     return;
@@ -1695,11 +1710,10 @@ async function connect(password, intent = null, previous = null) {
       await peer.setRemoteDescription(answer);
     }
   } catch (error) {
-    const retryable = session.connectionMethod.method==='direct'
-      ? ![409,429].includes(error.status)
-      : ![400,401,403,409,429].includes(error.status);
+    const retry = RemmieConnections.retryPolicy(session.connectionMethod.method,error.status,session.intent.connected);
+    session.retryCurrentOnly=retry.sameMethodOnly;
     session.methodHttpStatus=error.status;
-    finish(session, error.message || "Connection failed.", "error", false, retryable);
+    finish(session, error.message || "Connection failed.", "error", false, retry.recover);
   }
 }
 
