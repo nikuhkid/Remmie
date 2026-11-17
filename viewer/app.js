@@ -518,6 +518,131 @@ await waitForBreachUnlock();
 
 // --- Existing Remmie viewer (unchanged) ---
 
+// Bundled into app.js for the three-asset public viewer.
+const RemmieConnections = (() => {
+  const names = Object.freeze({direct:'Existing connection', 'https-poll':'HTTPS polling',
+    'https-long-poll':'HTTPS long polling', 'https-sse':'HTTPS event stream', websocket:'WebSocket',
+    'turn-tls':'TURN/TLS', 'turn-tcp':'TURN/TCP'});
+  const alternativeOrder = ['https-poll','https-long-poll','https-sse','websocket','turn-tls','turn-tcp'];
+  const token = () => crypto.randomUUID().replaceAll('-', '');
+
+  function relayLink(value) {
+    const url = new URL(value);
+    if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost','127.0.0.1'].includes(url.hostname))) ||
+        url.username || url.password || url.search || !/^\/api\/relay\/[A-Za-z0-9_-]{16,128}\/?$/.test(url.pathname))
+      throw Error('Enter the HTTPS relay link supplied by the host owner.');
+    const key = url.hash.slice(1);
+    if (key.length < 32 || key.length > 256) throw Error('The relay link is missing its access key.');
+    url.hash = ''; url.pathname = url.pathname.replace(/\/?$/, '/');
+    return {url:url.href, key};
+  }
+
+  class Plan {
+    constructor(selection, link) {
+      this.relay = selection==='direct' ? null : link ? relayLink(link) : null;
+      this.methods = selection === 'auto' ? ['direct', ...(this.relay ? alternativeOrder : [])] : [selection];
+      if (!this.methods.every(m => names[m]) || (selection !== 'auto' && selection !== 'direct' && !this.relay))
+        throw Error('This method requires a relay link.');
+      this.index = 0; this.attempts = []; this.connected = false;
+    }
+    current() { return this.methods[this.index]; }
+    next() { if (this.index + 1 >= this.methods.length) return false; this.index++; return true; }
+    record(id, method, stage, httpStatus) {
+      this.attempts = this.attempts.filter(row => row.id !== id);
+      this.attempts.push({id, method, stage, ...(Number.isInteger(httpStatus) ? {httpStatus} : {})});
+      this.attempts = this.attempts.slice(-32);
+    }
+  }
+
+  function timeoutSignal(parent, milliseconds=30000) {
+    const controller = new AbortController();
+    const cancel = () => controller.abort(parent.reason);
+    if (parent?.aborted) cancel(); else parent?.addEventListener('abort',cancel,{once:true});
+    const timer = setTimeout(() => controller.abort(new DOMException('Connection method timed out','TimeoutError')), milliseconds);
+    return {signal:controller.signal, close(){clearTimeout(timer);parent?.removeEventListener('abort',cancel);}};
+  }
+
+  class Method {
+    constructor(method, relay) {
+      if (!names[method]) throw Error('Unknown connection method');
+      this.method=method; this.relay=relay; this.id=token(); this.cancelKey=token(); this.offered=false;
+    }
+    async rpc(operation, payload={}, parent) {
+      if (!this.relay) throw Error('Relay is not configured');
+      const deadline=timeoutSignal(parent);
+      const value={key:this.relay.key, method:this.method, operation, payload, attempt:this.id};
+      try {
+        deadline.signal.throwIfAborted();
+        let result;
+        if (this.method==='websocket') result=await this.socket(value,deadline.signal);
+        else {
+          const created=await this.post('requests',value,deadline.signal);
+          if (this.method==='turn-tls'||this.method==='turn-tcp') result=created;
+          else if(this.method==='https-sse') result=await this.events(created.id,deadline.signal);
+          else {
+            do {
+              result=await this.post('poll',{key:this.relay.key,id:created.id},deadline.signal);
+              if(result.pending) await new Promise((resolve,reject)=>{
+                const cancelled=()=>{clearTimeout(timer);reject(deadline.signal.reason);};
+                const timer=setTimeout(()=>{deadline.signal.removeEventListener('abort',cancelled);resolve();},250);
+                if(deadline.signal.aborted)cancelled();else deadline.signal.addEventListener('abort',cancelled,{once:true});
+              });
+            } while(result.pending);
+          }
+        }
+        if(!result||!Number.isInteger(result.status)||typeof result.body!=='object'||result.body===null)
+          throw Error('Invalid relay response');
+        if(result.status!==200)throw Object.assign(Error(result.body.error||'Relay exchange failed'),{status:result.status});
+        return result.body;
+      } finally {deadline.close();}
+    }
+    async post(path,value,signal,raw=false) {
+      const response=await fetch(new URL(path,this.relay.url),{method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},
+        body:JSON.stringify(value),signal,credentials:'omit',redirect:'error',cache:'no-store'});
+      if(!response.ok){const error=await response.json().catch(()=>({}));throw Object.assign(Error(error.error||'Relay request failed'),{status:response.status});}
+      return raw?response:response.json();
+    }
+    async events(id,signal) {
+      const response=await this.post('events',{key:this.relay.key,id},signal,true);
+      if(!response.headers.get('content-type')?.startsWith('text/event-stream'))throw Error('Event stream was not accepted');
+      const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+      try {
+        while(true){
+          const {value,done}=await reader.read();if(done)throw Error('Event stream ended before an answer');
+          buffer+=decoder.decode(value,{stream:true}).replaceAll('\r\n','\n');
+          if(buffer.length>65536)throw Error('Relay response is too large');
+          let end;
+          while((end=buffer.indexOf('\n\n'))>=0){
+            const event=buffer.slice(0,end);buffer=buffer.slice(end+2);
+            const data=event.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
+            if(data)return JSON.parse(data);
+          }
+        }
+      } finally {await reader.cancel().catch(()=>{});}
+    }
+    socket(value,signal) {
+      const url=new URL('ws',this.relay.url);url.protocol=url.protocol==='https:'?'wss:':'ws:';
+      return new Promise((resolve,reject)=>{
+        const socket=new WebSocket(url);let settled=false;
+        function finish(error,result){if(settled)return;settled=true;signal.removeEventListener('abort',cancel);socket.close();error?reject(error):resolve(result);}
+        const cancel=()=>finish(signal.reason||Error('Connection cancelled'));
+        socket.addEventListener('open',()=>{if(!settled)socket.send(JSON.stringify(value));});
+        socket.addEventListener('message',event=>{try{finish(null,JSON.parse(event.data));}catch{finish(Error('Invalid relay response'));}});
+        socket.addEventListener('error',()=>finish(Error('WebSocket connection failed')));
+        socket.addEventListener('close',()=>finish(Error('WebSocket closed before an answer')));
+        if(signal.aborted)cancel();else signal.addEventListener('abort',cancel,{once:true});
+      });
+    }
+    async cleanup() {
+      if(!this.offered || this.method==='direct')return;
+      const cleanup=new Method('https-poll',this.relay);cleanup.id=this.id;
+      const deadline=timeoutSignal(null,4000);
+      try{await cleanup.rpc('cancel',{cancelKey:this.cancelKey},deadline.signal);}catch{}finally{deadline.close();}
+    }
+  }
+  return {names, alternativeOrder, relayLink, Plan, Method};
+})();
+
 const form = document.querySelector("#connect-form");
 const serverField = document.querySelector("#server");
 const serverLabel = document.querySelector("#server-label");
@@ -587,6 +712,52 @@ let keyboardAttempt = 0;
 let mouseCaptureWanted = false;
 let captureFailure = null;
 let mobileUI = null;
+const connectionMethodSelect = document.querySelector('#connection-method');
+const relayLinkField = document.querySelector('#relay-link');
+const remoteMethodSelect = document.querySelector('#remote-connection-method');
+const remoteRelayField = document.querySelector('#remote-relay-link');
+const switchMethodButton = document.querySelector('#switch-connection-method');
+const connectionAttemptsPanel = document.querySelector('#connection-attempts');
+const connectionAttemptsText = document.querySelector('#connection-attempts-text');
+
+function connectionAttempt(session, stage, httpStatus) {
+  if (!session?.connectionPlan || !session?.connectionMethod) return;
+  session.connectionPlan.record(session.connectionMethod.id,session.connectionMethod.method,stage,httpStatus);
+  const rows=session.connectionPlan.attempts;
+  connectionAttemptsPanel.hidden=false;
+  connectionAttemptsText.textContent=rows.map(r=>`${RemmieConnections.names[r.method]}: ${r.stage}${r.httpStatus?' · HTTP '+r.httpStatus:''}`).join('\n');
+  if(session.authorized && session.features?.connectionMethods)
+    send(session,{type:'connection-attempts',attempts:rows});
+}
+
+async function connectionRequest(session, base, operation, options={}) {
+  const method=session.connectionMethod;
+  if(operation==='offer')method.offered=true;
+  if(method.method!=='direct')return method.rpc(operation,options.body?JSON.parse(options.body):{},options.signal);
+  return requestJSON(base,operation,options);
+}
+
+async function cleanupConnectionAttempt(session) {
+  const method=session.connectionMethod;
+  if(!method?.offered || session.presented)return;
+  if(method.method!=='direct')return method.cleanup();
+  const timeout=AbortSignal.timeout(4000);
+  try { await requestJSON(session.base,'connection-cancel',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({attempt:method.id,cancelKey:method.cancelKey}),signal:timeout}); } catch {}
+}
+
+switchMethodButton.addEventListener('click',()=>{
+  const session=active;
+  if(!session?.authorized || !desired || session.handoverFrom || session.fileBusy || session.speedRun || session.probing)return;
+  try {
+    desired.nextPlan=new RemmieConnections.Plan(remoteMethodSelect.value,remoteRelayField.value);
+    if(remoteMethodSelect.value==='auto')desired.nextPlan.index=desired.nextPlan.methods.indexOf(session.connectionMethod.method)>=0?
+      desired.nextPlan.methods.indexOf(session.connectionMethod.method):0;
+    desired.nextPlan.attempts=session.connectionPlan.attempts.slice();
+  } catch(error) {controlStatus.textContent=error.message;return;}
+  desired.nextSelection=remoteMethodSelect.value;
+  connect(desired.password,desired,session);
+});
 
 function forgetConnection() {
   if (!desired) return;
@@ -621,11 +792,12 @@ function show(message, state = "idle") {
 
 function connecting(session, message, timeoutMessage) {
   if (active !== session) return;
+  switchMethodButton.disabled=!!session.handoverFrom;
   clearTimeout(session.connectTimer);
   session.timeoutMessage = timeoutMessage;
   session.connectTimer = setTimeout(
-    () => finish(session, session.timeoutMessage, "error", true, true), session.handoverFrom ? Math.max(1,session.handoverDeadline-performance.now()) : 45000);
-  show(session.handoverFrom ? `Preparing the new codec. ${message} The previous stream remains active.` : message,
+    () => finish(session, session.timeoutMessage, "error", true, true), session.handoverFrom ? Math.max(1,session.handoverDeadline-performance.now()) : Math.max(1,(session.methodDeadline || performance.now()+45000)-performance.now()));
+  show(session.handoverFrom ? `Preparing the replacement connection. ${message} The previous stream remains active.` : message,
     session.handoverFrom ? "connected" : "connecting");
 }
 
@@ -881,6 +1053,8 @@ function releaseInput(session) {
 
 function finish(session, message, state = "idle", tellHost = false, recover = false) {
   if (active !== session) return;
+  connectionAttempt(session,state==='error'||recover?'failed':'cancelled',session.methodHttpStatus);
+  const methodCleanup=cleanupConnectionAttempt(session);
   if (session.handoverFrom) {
     const previous = session.handoverFrom;
     send(session, {type: "disconnect"});
@@ -899,8 +1073,15 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
     profileSelect.value = previous.profile || "general";
     fpsSelect.value = String(previous.effectiveFPS || 20);
     if (previous.readyMessage) applyModeDetails(previous, previous.readyMessage);
-    if (previous.peer.connectionState === "connected" && recover) {
+    previous.connectionPlan.attempts=session.connectionPlan.attempts.slice();
+    const tryNextMethod=recover && session.intent.nextSelection==='auto' && session.connectionPlan!==previous.connectionPlan && session.connectionPlan.next();
+    if(!tryNextMethod){session.intent.nextPlan=null;session.intent.nextSelection=null;}
+    remoteMethodSelect.value=session.intent.selection;
+    switchMethodButton.disabled=false;
+    if (previous.peer.connectionState === "connected") {
       showDesktop(previous);
+      connectionAttempt(previous,'connected');
+      if(tryNextMethod)Promise.resolve(methodCleanup).finally(()=>{if(active===previous && desired===session.intent)connect(desired.password,desired,previous);});
       document.querySelector("#codec-status").textContent = `Kept ${previous.videoCodec}: ${message}`;
       return;
     }
@@ -957,6 +1138,14 @@ function finish(session, message, state = "idle", tellHost = false, recover = fa
   connectButton.disabled = false;
   disconnectButton.disabled = true;
   serverField.disabled = passwordField.disabled = false;
+  if(recover && !session.presented && desired===session.intent && session.connectionPlan.next()) {
+    show('Trying '+RemmieConnections.names[session.connectionPlan.current()]+'…','connecting');
+    Promise.resolve(methodCleanup).finally(()=>{if(desired===session.intent && !active)connect(session.intent.password,session.intent);});
+    return;
+  }
+  if(recover && !session.presented && desired===session.intent) {
+    forgetConnection();show('No selected connection method completed the session. See Connection attempts.','error');return;
+  }
   if (recover && desired === session.intent && session.intent.connected) {
     reconnect(session.intent, message);
   } else {
@@ -1204,7 +1393,12 @@ async function connect(password, intent = null, previous = null) {
     catch (error) { show(error.message, "error"); serverField.focus(); return; }
     forgetConnection();
     serverField.value = base.href;
-    desired = intent = { password, server: base.href, connected: false, attempt: 0 };
+    let plan;
+    try {plan=new RemmieConnections.Plan(connectionMethodSelect.value,relayLinkField.value);}
+    catch(error){show(error.message,'error');return;}
+    desired = intent = { password, server: base.href, connected: false, attempt: 0, plan, selection:connectionMethodSelect.value };
+    remoteMethodSelect.value=connectionMethodSelect.value;
+    remoteRelayField.value=relayLinkField.value;
   }
   if (desired !== intent) return;
   serverField.value = intent.server;
@@ -1217,12 +1411,16 @@ async function connect(password, intent = null, previous = null) {
     buttonPointerId: null,
     motionFrame: 0,
     handoverFrom: previous,
+    connectionPlan:previous ? (intent.nextPlan || intent.plan) : intent.plan,
+    methodDeadline:performance.now()+45000,
     handoverDeadline: previous ? performance.now()+codecHandoverTimeout : null,
     requestedCodec: selectedCodec,
     requestedFPS: selectedFPS,
     receiverOverride, receiverChoice:receiverBuffer.value,
     smoothingOverride, smoothingChecked:document.querySelector("#smooth-scale").checked,
   };
+  session.connectionMethod=new RemmieConnections.Method(session.connectionPlan.current(),session.connectionPlan.relay);
+  connectionAttempt(session,'starting');
   const video = previous ? document.createElement("video") : document.querySelector("#desktop");
   const audio = previous ? document.createElement("audio") : document.querySelector("#desktop-audio");
   if (previous) {
@@ -1249,11 +1447,13 @@ async function connect(password, intent = null, previous = null) {
     session.base = base;
     serverLabel.textContent = base.host;
     const signal = session.abort.signal;
-    const config = await requestJSON(base, "ice", { signal });
+    const config = await connectionRequest(session, base, "ice", { signal });
+    if(session.connectionMethod.method!=='direct' && (config.iceTransportPolicy!=='relay' || !config.iceServers?.length))
+      throw Error('The selected relay media route is unavailable.');
     if (active !== session) return;
     connecting(session, "Preparing connection…",
       "The browser timed out preparing the connection.");
-    const peer = new RTCPeerConnection({ iceServers: config.iceServers });
+    const peer = new RTCPeerConnection({ iceServers: config.iceServers, iceTransportPolicy:session.connectionMethod.method==='direct'?'all':'relay' });
     session.peer = peer;
     const transceiver = peer.addTransceiver("video", { direction: "recvonly" });
     if (config.audio === true) peer.addTransceiver("audio", {direction: "recvonly"});
@@ -1345,6 +1545,8 @@ async function connect(password, intent = null, previous = null) {
         session.canInput = message.input === true;
         session.permissions=message.permissions || {};
         session.features = message.features || {};
+        connectionAttempt(session,'authenticated');
+        switchMethodButton.disabled=!session.handoverToken;
         syncRelativeCursor(session);
         session.audioState = "starting";
         updateAudio(session);
@@ -1420,6 +1622,9 @@ async function connect(password, intent = null, previous = null) {
         }
         playAudio(session);
         showDesktop(session);
+      } else if(message?.type==='connection-method' && session.authorized) {
+        session.observedConnectionMethod=message.method;
+        controlStatus.textContent='Connection method: '+(RemmieConnections.names[message.method] || message.method);
       } else if (message?.type === "pong" && session.authorized) {
         session.lastPong = Date.now();
         session.hostTimings = message.timings || null;
@@ -1526,10 +1731,10 @@ async function connect(password, intent = null, previous = null) {
     await waitForIce(peer, signal);
     if (active !== session) return;
     connecting(session, "Waiting for the server’s response…", "The server’s response timed out.");
-    const answer = await requestJSON(base, "offer", {
+    const answer = await connectionRequest(session, base, "offer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({...peer.localDescription.toJSON(), ...(previous ? {handover:previous.handoverToken} : {}),
+      body: JSON.stringify({...peer.localDescription.toJSON(), connectionAttempt:session.connectionMethod.id, cancelKey:session.connectionMethod.cancelKey, ...(previous ? {handover:previous.handoverToken} : {}),
         ...(selectedProfile ? {profile:selectedProfile} : {}), codec:selectedCodec,
         ...(selectedFPS ? {fps:selectedFPS} : {}), ...(selectedResolution ? {resolution:selectedResolution} : {})}),
       signal,
@@ -1537,10 +1742,12 @@ async function connect(password, intent = null, previous = null) {
     if (active === session) {
       connecting(session, "Checking connection…",
         "The server answered, but the connection timed out.");
+      connectionAttempt(session,'setup');
       await peer.setRemoteDescription(answer);
     }
   } catch (error) {
     const retryable = !error.status || [408, 409, 429, 500, 502, 503, 504].includes(error.status);
+    session.methodHttpStatus=error.status;
     finish(session, error.message || "Connection failed.", "error", false, retryable);
   }
 }
@@ -1567,7 +1774,16 @@ function showDesktop(session) {
   document.title = "Remmie";
   menuToggle.hidden = false;
   menuToggle.disabled = false;
-  if (!session.presented) {session.presented=true;send(session,{type:"viewer-presented"});}
+  if (!session.presented) {
+    session.presented=true;send(session,{type:"viewer-presented"});
+    session.intent.plan=session.connectionPlan;
+    if(session.intent.nextSelection)session.intent.selection=session.intent.nextSelection;
+    session.intent.nextPlan=null;session.intent.nextSelection=null;
+    connectionMethodSelect.value=remoteMethodSelect.value=session.intent.selection;
+    relayLinkField.value=remoteRelayField.value;
+    connectionAttempt(session,'connected');
+  }
+  switchMethodButton.disabled=false;
   desktopControls(session);
   show(session.canInput ? "Connected to the remote desktop." : "Previewing the remote desktop.", "connected");
 }
