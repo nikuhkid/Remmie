@@ -273,23 +273,3 @@ body.breach-locked:has(#breach-outcome:not([hidden])) { overflow: hidden; }
 #breach-gate #breach-circuit .title-row{margin-top:20px;margin-bottom:20px}
 #breach-gate #breach-circuit h1{min-width:0}
 @media(max-width:480px){#breach-gate .breach-dim{display:inline}#breach-gate #breach-circuit .masthead{font-size:10px}#breach-gate #breach-circuit h1{font-size:23px}}
-:root { --connection-report-width: 26rem; }
-#connection-attempts {
-  position: fixed;
-  left: max(12px, env(safe-area-inset-left));
-  bottom: max(12px, env(safe-area-inset-bottom));
-  z-index: 35;
-  width: min(var(--connection-report-width), calc(100vw - 24px));
-  max-height: 35vh;
-  overflow: auto;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  background: #202223;
-  border: 1px solid #4b5055;
-  border-radius: 5px;
-  color: #e7eaed;
-  font-size: 13px;
-}
-#connection-attempts[hidden] { display: none; }
-#connection-attempts summary { cursor: pointer; }
-#connection-attempts pre { white-space: pre-wrap; margin: 8px 0 0; font: inherit; line-height: 1.5; }
