@@ -657,6 +657,9 @@ const speedStart = document.querySelector("#speed-start");
 const speedCancel = document.querySelector("#speed-cancel");
 const speedCopy = document.querySelector("#speed-copy");
 const speedSummary = document.querySelector("#speed-summary");
+const bandwidthStart=document.querySelector("#bandwidth-start");
+const bandwidthCancel=document.querySelector("#bandwidth-cancel");
+const bandwidthSummary=document.querySelector("#bandwidth-summary");
 let lastSpeedResult = null;
 let speedGeneration = 0;
 const sessionMenu = document.querySelector("#session-menu");
@@ -761,8 +764,12 @@ function desktopControls(session) {
   const connected = session?.authorized && video.readyState >= 2 &&
     session.peer.connectionState === "connected";
   const features = session?.features || {};
+  const modeFiles=["general","office"].includes(session?.profile || "general");
   const inputAvailable=connected && !(session?.handoverFrom || session)?.displayUnavailable;
-  const filesBusy = !!(session?.fileBusy || session?.fileCancelling || session?.handoverFrom);
+  const filesBusy = !!(session?.fileBusy || session?.fileCancelling || session?.handoverFrom || session?.bandwidthRun);
+  if(bandwidthStart)bandwidthStart.disabled=!connected || !features.bandwidthProbe || filesBusy ||
+    !!session?.speedRun || !!measurement || !!session?.pendingControl || !!session?.probing || !!session?.displayUnavailable;
+  if(bandwidthCancel)bandwidthCancel.disabled=!session?.bandwidthRun;
   profileSelect.disabled = !connected || !features.profiles || !!session.pendingControl || !!session.handoverFrom;
   document.querySelector("#mode-reset").disabled = !connected || !features.profileDefaults || !!session.pendingControl || filesBusy || !!session.probing;
   document.querySelector("#input-probe").disabled = !connected || !features.inputProbe || !!session.handoverFrom || !!session.pendingControl || !!session.probing;
@@ -780,9 +787,9 @@ function desktopControls(session) {
   fpsSelect.disabled = !connected || !features.videoSettings || !!session.pendingControl;
   document.querySelector("#clipboard-enable").disabled = !connected || !features.clipboardSync;
   for (const id of ["file-upload", "file-pick"]) {
-    document.querySelector(`#${id}`).disabled = !connected || !features.files || filesBusy || session.permissions?.[id==="file-upload" ? "uploads" : "downloads"]===false;
+    document.querySelector(`#${id}`).disabled = !connected || !features.files || !modeFiles || filesBusy || session.permissions?.[id==="file-upload" ? "uploads" : "downloads"]===false;
   }
-  document.querySelector("#file-download").disabled = !connected || !features.files || !session?.download || filesBusy;
+  document.querySelector("#file-download").disabled = !connected || !features.files || !modeFiles || !session?.download || filesBusy;
   document.querySelector("#file-cancel").disabled = !session?.fileBusy || !!session?.fileCancelling;
   speedStart.disabled = !connected || !features.speedTest || !session.speedToken || !!session.speedRun ||
     filesBusy || !!session.pendingControl || !!session.probing || !!measurement || !!session.displayUnavailable;
@@ -924,25 +931,105 @@ function videoCodecSupported(codec, name) {
   return true;
 }
 
-async function av1ReceiveLevel(capabilities = globalThis.navigator?.mediaCapabilities) {
-  if (!capabilities?.decodingInfo) return 5;
-  const query = async () => {
-    for (const [fps, bitrate, level] of [[60, 12000000, 9], [30, 8000000, 8]]) {
-      try {
-        const result = await capabilities.decodingInfo({type:"webrtc", video:{
-          contentType:"video/AV1", width:1920, height:1080, bitrate, framerate:fps}});
-        if (result.supported && result.smooth) return level;
-      } catch { return 5; }
-    }
-    return 5;
-  };
-  let timer;
-  try { return await Promise.race([query(), new Promise(resolve => {timer=setTimeout(() => resolve(5),1500);})]); }
-  finally { clearTimeout(timer); }
+// AV1 staged capability helpers. Decoder predictions and network throughput are separate.
+const receiveProbeCache = new WeakMap();
+function av1LevelFor(width, height, fps) {
+  const pixels=width*height, rate=pixels*fps;
+  if(width<=1280 && height<=720 && rate<=31950720)return 5;
+  if(width<=1920 && height<=1080 && rate<=70778880)return 8;
+  if(width<=1920 && height<=1080 && rate<=141557760)return 9;
+  return null;
 }
 
+async function probeReceiveCapabilities(codec, capabilities = globalThis.navigator?.mediaCapabilities, limits = {}) {
+  if(!["AV1","H264","VP8","VP9"].includes(codec))throw Error("Unsupported video codec");
+  const width=Math.min(codec==="AV1"?1920:3840,Math.max(2,Math.floor((limits.width || 1920)/2)*2));
+  const height=Math.min(codec==="AV1"?1080:2160,Math.max(2,Math.floor((limits.height || 1080)/2)*2));
+  const maxFPS=Math.min(60,Math.max(5,limits.fps || 60));
+  const referenceBitrate=Math.min(4000000,Math.max(250000,limits.bitrate || 4000000));
+  const result={codec,status:"unknown",level:5,configurations:[],attempts:[],referenceBitrate,
+    meaning:"Decoder prediction only; network bandwidth has not been measured."};
+  if(!capabilities?.decodingInfo)return {...result,reason:"capability-api-unavailable"};
+  const key=JSON.stringify([codec,width,height,maxFPS,referenceBitrate]);
+  let entries=receiveProbeCache.get(capabilities);
+  if(!entries){entries=new Map();receiveProbeCache.set(capabilities,entries);}
+  const cached=entries.get(key);
+  if(cached?.key===key && Date.now()-cached.at<(cached.status==='unknown'?5000:60000))return cached.promise;
+  const run=async()=>{
+    const deadline=performance.now()+1500;
+    let stopped=false;
+    const check=async(w,h,fps,stage)=>{
+      const old=result.attempts.find(a=>a.width===w && a.height===h && a.fps===fps);
+      if(old)return old;
+      const record={stage,width:w,height:h,fps,bitrate:referenceBitrate,status:"unknown"};
+      if(stopped || performance.now()>=deadline){stopped=true;return record;}
+      let timer;
+      try {
+        const answer=await Promise.race([
+          Promise.resolve().then(()=>capabilities.decodingInfo({type:"webrtc",video:{
+            contentType:`video/${codec}`,width:w,height:h,framerate:fps,bitrate:referenceBitrate}})),
+          new Promise(resolve=>{timer=setTimeout(()=>resolve(null),Math.max(1,Math.min(250,deadline-performance.now())));})
+        ]);
+        if(answer===null){stopped=true;record.reason="timeout";}
+        else if(typeof answer?.supported==="boolean" && typeof answer?.smooth==="boolean") {
+          record.status=answer.supported && answer.smooth ? "supported" : "unsupported";
+          record.powerEfficient=answer.powerEfficient===true;
+        } else record.reason="invalid-answer";
+      } catch {record.reason="query-error";}
+      finally {clearTimeout(timer);}
+      result.attempts.push(record);
+      if(record.status==="supported")result.configurations.push({...record,level:codec==="AV1"?av1LevelFor(w,h,fps):null});
+      return record;
+    };
+    const sizes=[[width,height],[2560,1440],[1920,1080],[1280,720],[640,360]].filter(([w,h],i,all)=>
+      w<=width && h<=height && all.findIndex(s=>s[0]===w && s[1]===h)===i);
+    // First inspect size at a common cadence; then inspect cadence per working size.
+    const baseFPS=[30,20,15,10,5].find(f=>f<=maxFPS);
+    const working=[];
+    for(const [w,h] of sizes) {
+      const answer=await check(w,h,baseFPS,"resolution");
+      if(answer.status==="supported")working.push([w,h]);
+      if(stopped)break;
+    }
+    for(const [w,h] of working) {
+      for(const fps of [60,30,20,15,10,5].filter(f=>f<=maxFPS)) {
+        if(codec!=="AV1" || av1LevelFor(w,h,fps)!==null)await check(w,h,fps,"framerate");
+        if(stopped)break;
+      }
+      if(stopped)break;
+    }
+    result.configurations=result.configurations.filter(c=>codec!=="AV1" || c.level!==null);
+    result.level=Math.max(5,...result.configurations.map(c=>c.level));
+    result.status=result.configurations.length?"supported":
+      result.attempts.length && result.attempts.every(a=>a.status==="unsupported")?"unsupported":"unknown";
+    if(stopped)result.reason="bounded-query-timeout";
+    return result;
+  };
+  const entry={key,at:Date.now(),status:'pending'};
+  entry.promise=run().then(answer=>{entry.status=answer.status;return answer;});
+  entries.set(key,entry);
+  if(entries.size>32)entries.delete(entries.keys().next().value);
+  return entry.promise;
+}
+
+async function av1ReceiveProbe(capabilities = globalThis.navigator?.mediaCapabilities, limits = {}) {
+  return probeReceiveCapabilities("AV1",capabilities,limits);
+}
+
+async function av1ReceiveLevel(capabilities = globalThis.navigator?.mediaCapabilities) {
+  return (await av1ReceiveProbe(capabilities)).level;
+}
+
+function selectReceiveConfiguration(probe, limits = {}) {
+  return probe.configurations.filter(c=>c.width<=(limits.width || 1920) &&
+    c.height<=(limits.height || 1080) && c.fps<=(limits.fps || 60))
+    .sort((a,b)=>b.width*b.height-a.width*a.height || b.fps-a.fps)[0] || null;
+}
+
+function selectAv1Configuration(probe,limits={}){return selectReceiveConfiguration(probe,limits);}
+
 function av1OfferLevel(offer, level) {
-  if (level <= 5) return offer;
+  if (![5,8,9].includes(level)) throw new Error("Unsupported AV1 receive level.");
   const payloads = new Set([...offer.sdp.matchAll(/^a=rtpmap:(\d+) AV1\/90000\r?$/gmi)].map(m => m[1]));
   const sdp = offer.sdp.replace(/^a=fmtp:(\d+) ([^\r\n]+)(\r?)$/gm, (line, payload, parameters, cr) => {
     if (!payloads.has(payload)) return line;
@@ -1411,6 +1498,7 @@ async function connect(password, intent = null, previous = null) {
     serverLabel.textContent = base.host;
     const signal = session.abort.signal;
     const config = await connectionRequest(session, base, "ice", { signal });
+    session.videoProbeLimits=config.videoProbeLimits || {};
     if(session.connectionMethod.method!=='direct' && !RemmieConnections.relayConfiguration(config))
       throw Error('The selected relay media route is unavailable.');
     if (active !== session) return;
@@ -1535,7 +1623,8 @@ async function connect(password, intent = null, previous = null) {
         if (message.videoCodec) document.querySelector("#codec-status").textContent =
           `${message.videoCodec} · ${message.encoder || "host encoder"}${message.videoLimits ? ` · up to ${message.videoLimits.width}×${message.videoLimits.height}/${message.videoLimits.fps} FPS` : ""}. ` +
           (session.handoverToken ? "Codec changes keep this stream until its replacement is ready." : "This host reconnects when its codec changes.");
-        fileStatus.textContent = session.features.files ? "Ready. Maximum file size: 16 GiB." : "Restart the updated host to enable file transfer.";
+        fileStatus.textContent = session.features.files ? "Files ready. Limited by destination space, filesystem and browser capabilities." :
+          ['gaming','media'].includes(session.profile)?'File transfer is disabled in this mode.':'File transfer is unavailable on this host.';
         if (session.features.videoSettings) {
           fpsSelect.value = String(message.fps);
           if (selectedFPS && selectedFPS !== message.fps) session.restoreFPS = Math.min(selectedFPS, session.maxFPS);
@@ -1543,8 +1632,8 @@ async function connect(password, intent = null, previous = null) {
         if (session.features.clipboardSync && !session.handoverFrom) {
           session.clip = { baseline: false, busy: false, pending: null, remote: null };
           session.clipboardTimer = setInterval(() => syncClipboard(session), 750);
-          syncClipboard(session);
-        } else clipboardStatus.textContent = "Restart the updated host to enable automatic bidirectional text sync.";
+          if(!clipboardAllowed)allowClipboard();else syncClipboard(session);
+        } else if(!session.features.clipboardSync) clipboardStatus.textContent = "Restart the updated host to enable automatic bidirectional text sync.";
         session.intent.connected = true;
         session.lastPong = Date.now();
         if (session.features.monitors) session.pendingControl = "monitors-get";
@@ -1581,6 +1670,7 @@ async function connect(password, intent = null, previous = null) {
         if (session.features.clipboardSync) {
           session.clip ||= {last:null,pending:null,remote:null};
           session.clipboardTimer = setInterval(() => syncClipboard(session),750);
+          if(!clipboardAllowed)allowClipboard();else syncClipboard(session);
         }
         playAudio(session);
         showDesktop(session);
@@ -1600,7 +1690,7 @@ async function connect(password, intent = null, previous = null) {
         session.permissions=p;
         session.features.clipboardSync=session.features.clipboard=!!p.clipboard;
         session.features.audio=!!p.sound;
-        session.features.files=!!(p.uploads || p.downloads);
+        session.features.files=!!(p.uploads || p.downloads) && ["general","office"].includes(session.profile);
         if (!p.clipboard) {session.clip=null;clearInterval(session.clipboardTimer);}
         else if (!session.clip) {session.clip={last:null,pending:null,remote:null};session.clipboardTimer=setInterval(()=>syncClipboard(session),750);}
         updateAudio(session);desktopControls(session);
@@ -1687,8 +1777,29 @@ async function connect(password, intent = null, previous = null) {
         show(message.message, "error");
       }
     });
-    const offer = await peer.createOffer();
-    const av1Level = browserCodecs.some(c => videoCodecSupported(c,"AV1")) ? await av1ReceiveLevel() : 5;
+    const probeNames=selectedCodec==='auto'?session.codecs:[selectedCodec];
+    const predictions=await Promise.all(probeNames.map(name=>probeReceiveCapabilities(name,
+      globalThis.navigator?.mediaCapabilities,session.videoProbeLimits)));
+    session.receiveProbes=Object.fromEntries(predictions.map(p=>[p.codec,p]));
+    const profile=selectedProfile || config.videoProbeLimits?.profile || 'general';
+    const targetFPS=Math.min(profile==='office'?30:60,session.videoProbeLimits.fps || 60,selectedFPS ||
+      ({general:30,office:30,gaming:60,media:60}[profile] || 30));
+    const dimensions=selectedResolution?.match(/^(\d+)x(\d+)$/);
+    const wanted={...session.videoProbeLimits,...(dimensions?{width:Number(dimensions[1]),height:Number(dimensions[2])}:{}),fps:targetFPS};
+    session.receiveConfigurations=Object.fromEntries(predictions.map(p=>[p.codec,selectReceiveConfiguration(p,wanted)]));
+    const unsupported=new Set(predictions.filter(p=>p.status==='unsupported').map(p=>p.codec));
+    if(selectedCodec!=='auto' && unsupported.has(selectedCodec))throw Error(`No smooth ${selectedCodec} configuration was confirmed.`);
+    if(unsupported.size)transceiver.setCodecPreferences(browserCodecs.filter(c=>
+      !unsupported.has(c.mimeType.split('/')[1]) && (selectedCodec==='auto' || videoCodecSupported(c,selectedCodec) || c.mimeType.toLowerCase()==='video/rtx')));
+    session.av1Probe=session.receiveProbes.AV1 || {status:'unknown',configurations:[]};
+    session.av1Configuration=session.receiveConfigurations.AV1 || null;
+    const av1Level=session.av1Configuration?.level || 5;
+    const probeStatus=document.querySelector('#av1-probe-status');
+    if(probeStatus)probeStatus.textContent=predictions.map(p=>{
+      const c=session.receiveConfigurations[p.codec];
+      return c?`${p.codec}: ${c.width}×${c.height}/${c.fps} FPS predicted`:`${p.codec}: ${p.status}`;
+    }).join(' · ')+'. Network bandwidth is measured separately.';
+    const offer=await peer.createOffer();
     if (active !== session) return;
     await peer.setLocalDescription(av1OfferLevel(offer,av1Level));
     connecting(session, "Gathering network candidates…", "The browser timed out gathering network candidates.");
@@ -1700,6 +1811,9 @@ async function connect(password, intent = null, previous = null) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({...peer.localDescription.toJSON(), connectionAttempt:session.connectionMethod.id, cancelKey:session.connectionMethod.cancelKey, ...(previous ? {handover:previous.handoverToken} : {}),
         ...(selectedProfile ? {profile:selectedProfile} : {}), codec:selectedCodec,
+         receiveConfigs:Object.fromEntries(Object.entries(session.receiveConfigurations).filter(([,c])=>c).map(([name,c])=>[name,{width:c.width,height:c.height,fps:c.fps}])),
+         ...(session.av1Configuration ? {av1Receive:{width:session.av1Configuration.width,
+           height:session.av1Configuration.height,fps:session.av1Configuration.fps}} : {}),
         ...(selectedFPS ? {fps:selectedFPS} : {}), ...(selectedResolution ? {resolution:selectedResolution} : {})}),
       signal,
     });
@@ -2103,7 +2217,8 @@ fpsSelect.addEventListener("change", () => {
   if (active?.features?.videoSettings) {
     selectedFPS = Number(fpsSelect.value);
     active.requestedFPS = selectedFPS;
-    requestControl(active, {type: "video-settings", fps:selectedFPS});
+    if(active.features?.videoProbe && active.handoverToken)connect(desired.password,desired,active);
+    else requestControl(active, {type: "video-settings", fps:selectedFPS});
   }
 });
 codecSelect.addEventListener("change", () => {
@@ -2115,6 +2230,7 @@ codecSelect.addEventListener("change", () => {
 });
 
 function disposeSession(session) {
+  session.bandwidthRun?.abort.abort();
   session.speedRun?.abort.abort();
   session.speedToken = "";
   session.abort.abort();
@@ -2171,9 +2287,9 @@ function applyModeDetails(session, message) {
   const overrides=[selectedCodec!=="auto" ? "codec" : null,selectedFPS ? "FPS" : null,
     receiverOverride ? "buffer" : null,smoothingOverride ? "scaling" : null].filter(Boolean);
   document.querySelector("#profile-status").textContent=
-    `${session.profile[0].toUpperCase()+session.profile.slice(1)}: ${message.videoCodec}, ${message.fps} FPS ceiling, files up to ${policy.fileTransferMbps ?? "host policy"} Mbps. ${message.codecReason || ""}.`+
+    `${session.profile[0].toUpperCase()+session.profile.slice(1)}: ${message.videoCodec}, ${message.fps} FPS ceiling, ${policy.fileTransferMbps===0?'files disabled':`files up to ${policy.fileTransferMbps ?? "host policy"} Mbps`}. ${message.codecReason || ""}.`+
     (overrides.length ? ` Manual overrides: ${overrides.join(", ")}.` : "")+
-    (session.profile==="office" ? " Office favours text with 15 FPS and sharp scaling; the stream still uses 4:2:0 colour." : "");
+    (session.profile==="office" ? " Office favours text with 30 FPS and sharp scaling; the stream still uses 4:2:0 colour." : "");
   const sound=message.audioSettings;
   document.querySelector("#audio-format").textContent=sound
     ? `${sound.codec} · ${sound.sample_rate/1000} kHz stereo · ${sound.bitrate_kbps} kbps · ${sound.packet_ms} ms · ${sound.application}` : "Playback audio is unavailable.";
@@ -2317,6 +2433,118 @@ speedStart.addEventListener("click", async () => {
     desktopControls(active);
   }
 });
+// WebRTC bandwidth helpers. No bulk data is sent until the explicit button action.
+function measureWebRTCBandwidth(session, {signal,onProgress=()=>{}} = {}) {
+  if(!session.authorized || !session.features.bandwidthProbe)return Promise.reject(new Error('This host does not support WebRTC bandwidth measurement.'));
+  if(signal?.aborted)return Promise.reject(new Error('Bandwidth measurement cancelled.'));
+  return new Promise((resolve,reject)=>{
+    const nonce=crypto.getRandomValues(new Uint8Array(16));
+    const id=[...nonce].map(v=>v.toString(16).padStart(2,'0')).join('');
+    const channel=session.peer.createDataChannel('remmie-bandwidth-v1',{ordered:true});
+    channel.binaryType='arraybuffer';
+    let began=null,bytes=0,acknowledged=0,settled=false;
+    const timer=setTimeout(()=>finish(new Error('Bandwidth measurement timed out.')),8000);
+    const cancel=()=>finish(new Error('Bandwidth measurement cancelled.'));
+    const finish=(error,result)=>{
+      if(settled)return;
+      settled=true;clearTimeout(timer);signal?.removeEventListener('abort',cancel);
+      if(error && channel.readyState==='open')channel.send(JSON.stringify({type:'cancel',id}));
+      channel.close();
+      if(error)reject(error);else resolve(result);
+    };
+    signal?.addEventListener('abort',cancel,{once:true});
+    channel.addEventListener('open',()=>channel.send(JSON.stringify({type:'start',id})),{once:true});
+    channel.addEventListener('close',()=>finish(new Error('The bandwidth channel closed before completion.')),{once:true});
+    channel.addEventListener('error',()=>finish(new Error('The bandwidth channel failed.')),{once:true});
+    channel.addEventListener('message',event=>{
+      try {
+        if(typeof event.data==='string') {
+          const value=JSON.parse(event.data);
+          if(value.id!==id)throw Error('Unexpected bandwidth measurement identifier.');
+          if(value.type==='error')throw Error(value.message || 'Bandwidth measurement refused.');
+          if(value.type==='started') {
+            if(began!==null || !(value.seconds>0 && value.seconds<=5) ||
+              !Number.isSafeInteger(value.byteLimit) || value.byteLimit<=0 || value.byteLimit>64*1024**2)
+              throw Error('Invalid bandwidth measurement bounds.');
+            began=performance.now();return;
+          }
+          if(value.type==='done') {
+            if(began===null || !bytes || value.bytes!==bytes || !Number.isFinite(value.seconds) || value.seconds<=0 || value.seconds>8)
+              throw Error('The bandwidth measurement was incomplete.');
+            const seconds=Math.max(value.seconds,(performance.now()-began)/1000);
+            finish(null,{bytes,seconds,mbps:bytes*8/seconds/1e6,
+              reason:value.reason,transport:'WebRTC reliable data channel',streamContinued:true,
+              connectionMethod:session.connectionMethod?.method || 'unknown'});
+          }
+          return;
+        }
+        const packet=new Uint8Array(event.data);
+        if(began===null || packet.length<=16 || packet.length>16+16384 ||
+          nonce.some((v,i)=>packet[i]!==v))throw Error('Invalid bandwidth measurement data.');
+        bytes+=packet.length-16;
+        if(bytes>64*1024**2)throw Error('Bandwidth measurement exceeded its byte limit.');
+        if(bytes-acknowledged>=65536) {
+          channel.send(JSON.stringify({type:'ack',id,bytes}));acknowledged=bytes;
+        }
+        onProgress(bytes);
+      } catch(error) {finish(error);}
+    });
+  });
+}
+
+function provisionalVideoBudget(mbps, ceiling) {
+  if(!Number.isFinite(mbps) || mbps<=0 || !Number.isFinite(ceiling) || ceiling<=0)return null;
+  const headroom=mbps*.7-.5;
+  return headroom>=.25?Math.round(Math.min(ceiling,headroom)*100)/100:null;
+}
+
+async function decoderBudgetPrediction(codec, configuration, mbps, capabilities=globalThis.navigator?.mediaCapabilities) {
+  if(!configuration || !capabilities?.decodingInfo)return 'unknown';
+  let timer;
+  try {
+    const answer=await Promise.race([
+      Promise.resolve().then(()=>capabilities.decodingInfo({type:'webrtc',video:{contentType:`video/${codec}`,
+        width:configuration.width,height:configuration.height,framerate:configuration.fps,bitrate:Math.round(mbps*1e6)}})),
+      new Promise(resolve=>{timer=setTimeout(()=>resolve(null),500);})]);
+    return typeof answer?.supported!=='boolean' || typeof answer?.smooth!=='boolean'?'unknown':
+      answer.supported && answer.smooth?'supported':'unsupported';
+  } catch {return 'unknown';}
+  finally {clearTimeout(timer);}
+}
+
+async function av1BudgetPrediction(configuration,mbps,capabilities=globalThis.navigator?.mediaCapabilities){return decoderBudgetPrediction('AV1',configuration,mbps,capabilities);}
+
+bandwidthStart?.addEventListener('click',async()=>{
+  const session=active;
+  if(!session?.authorized || !session.features.bandwidthProbe || bandwidthStart.disabled)return;
+  const run={abort:new AbortController()};session.bandwidthRun=run;
+  const stopped=()=>run.abort.abort();session.abort.signal.addEventListener('abort',stopped,{once:true});
+  bandwidthSummary.textContent='Measuring host → viewer through WebRTC…';desktopControls(session);
+  try {
+    const result=await measureWebRTCBandwidth(session,{signal:run.abort.signal});
+    if(active!==session)throw Error('The connection changed; the result was discarded.');
+    session.bandwidthResult=result;
+    const limit=Math.min((session.videoProbeLimits?.bitrate || 20000000)/1e6,
+      session.readyMessage?.videoCodec==='AV1'?(session.readyMessage.videoLimits?.bitrate || 10000000)/1e6:Infinity);
+    const budget=provisionalVideoBudget(result.mbps,limit);
+    const codec=session.readyMessage?.videoCodec || session.requestedCodec;
+    const prediction=budget?await decoderBudgetPrediction(codec,session.receiveConfigurations?.[codec],budget):'unknown';
+    if(active!==session || run.abort.signal.aborted)throw Error('The connection changed or the measurement was cancelled.');
+    bandwidthSummary.textContent=`WebRTC host → viewer: ${result.mbps.toFixed(2)} Mbps · ${(result.bytes/1024**2).toFixed(2)} MiB in ${result.seconds.toFixed(2)}s\n`+
+      `Path: ${result.connectionMethod}. Reliable data-channel throughput with the stream running.\n`+
+      (budget?`Provisional video budget: ${budget.toFixed(2)} Mbps, within host/codec limits. Not applied.\n`:'Insufficient measured headroom for a video budget.\n')+
+      `${codec} decoder prediction at that budget: ${prediction}. Network throughput and decoding are separate.\n`+
+      'Not maximum ISP speed, raw UDP capacity, guaranteed video bitrate or input-to-screen latency.';
+  } catch(error) {if(active===session)bandwidthSummary.textContent=error.message || 'Bandwidth measurement failed.';}
+  finally {
+    session.abort.signal.removeEventListener('abort',stopped);
+    if(session.bandwidthRun===run)session.bandwidthRun=null;
+    desktopControls(active);
+  }
+});
+bandwidthCancel?.addEventListener('click',()=>active?.bandwidthRun?.abort.abort());
+// End WebRTC bandwidth helpers.
+
 speedCancel.addEventListener("click", () => active?.speedRun?.abort.abort());
 speedCopy.addEventListener("click", async () => {
   if (!lastSpeedResult) return;
@@ -2400,6 +2628,10 @@ async function allowClipboard() {
 document.querySelector("#clipboard-enable").addEventListener("click", allowClipboard);
 async function syncClipboard(session) {
   const clip = session.clip;
+  if(active===session && clip && !clipboardAllowed && !document.hidden && document.hasFocus()
+      && navigator.clipboard?.readText && Date.now()>=(session.clipboardRetryAt || 0)){
+    session.clipboardRetryAt=Date.now()+5000;allowClipboard();return;
+  }
   if (active !== session || !clipboardAllowed || !clip || clip.busy || clip.pending !== null ||
       document.hidden || !document.hasFocus()) return;
   clip.busy = true;
@@ -2462,7 +2694,7 @@ async function pasteClipboard(session) {
     }
   } finally { if (locked) session.clip.busy = false; }
 }
-window.addEventListener("focus", () => { if (active?.clip) syncClipboard(active); });
+window.addEventListener("focus", () => { if (active?.clip) {if(clipboardAllowed)syncClipboard(active);else allowClipboard();} });
 
 function updateAudio(session) {
   if (active !== session) return;
@@ -2493,9 +2725,140 @@ audioVolume.addEventListener("input", () => { if (active) playAudio(active); });
 resolutionSelect.addEventListener("change", () => {
   if (active?.features?.resolutions) {
     selectedResolution=resolutionSelect.value;
-    requestControl(active, {type: "video-settings", resolution:selectedResolution});
+    if(active.features?.videoProbe && active.handoverToken)connect(desired.password,desired,active);
+    else requestControl(active, {type: "video-settings", resolution:selectedResolution});
   }
 });
+
+// Streaming file helpers: shared by direct and relayed WebRTC peers.
+class FileSHA256 {
+  constructor(){this.h=new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);this.buffer=new Uint8Array(64);this.used=0;this.total=0;this.w=new Uint32Array(64);this.done=false;}
+  block(data,offset=0){
+    const w=this.w,view=new DataView(data.buffer,data.byteOffset+offset,64);
+    const rotate=(x,n)=>(x>>>n)|(x<<(32-n));
+    for(let i=0;i<16;i++)w[i]=view.getUint32(i*4);
+    for(let i=16;i<64;i++){const x=w[i-15],y=w[i-2];w[i]=(w[i-16]+(rotate(x,7)^rotate(x,18)^(x>>>3))+w[i-7]+(rotate(y,17)^rotate(y,19)^(y>>>10)))>>>0;}
+    let [a,b,c,d,e,f,g,h]=this.h;
+    for(let i=0;i<64;i++){
+      const t=(h+(rotate(e,6)^rotate(e,11)^rotate(e,25))+((e&f)^(~e&g))+FileSHA256.K[i]+w[i])>>>0;
+      const u=((rotate(a,2)^rotate(a,13)^rotate(a,22))+((a&b)^(a&c)^(b&c)))>>>0;
+      h=g;g=f;f=e;e=(d+t)>>>0;d=c;c=b;b=a;a=(t+u)>>>0;
+    }
+    [a,b,c,d,e,f,g,h].forEach((v,i)=>{this.h[i]=(this.h[i]+v)>>>0;});
+  }
+  update(data){
+    if(this.done || !Number.isSafeInteger(this.total+data.length))throw Error('Invalid file hash state');
+    this.total+=data.length;let offset=0;
+    if(this.used){const count=Math.min(64-this.used,data.length);this.buffer.set(data.subarray(0,count),this.used);this.used+=count;offset+=count;if(this.used===64){this.block(this.buffer);this.used=0;}}
+    while(offset+64<=data.length){this.block(data,offset);offset+=64;}
+    if(offset<data.length){this.buffer.set(data.subarray(offset),this.used);this.used+=data.length-offset;}
+  }
+  hex(){
+    if(this.done)throw Error('File hash is already final');this.done=true;
+    let used=this.used;this.buffer[used++]=128;
+    if(used>56){this.buffer.fill(0,used);this.block(this.buffer);used=0;}
+    this.buffer.fill(0,used,56);new DataView(this.buffer.buffer).setBigUint64(56,BigInt(this.total)*8n);this.block(this.buffer);
+    return [...this.h].map(v=>v.toString(16).padStart(8,'0')).join('');
+  }
+}
+FileSHA256.K=new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+
+class FileRPC {
+  constructor(session,signal){
+    this.channel=session.peer.createDataChannel('remmie-files-v1',{ordered:true});this.channel.binaryType='arraybuffer';
+    this.queue=[];this.pending=null;this.closed=null;this.signal=signal;
+    this.open=new Promise((resolve,reject)=>{
+      this.openReject=reject;this.openTimer=setTimeout(()=>this.fail(Error('File channel timed out opening.')),12000);
+      this.channel.addEventListener('open',()=>{clearTimeout(this.openTimer);resolve();},{once:true});
+    });
+    this.open.catch(()=>{});
+    this.abort=()=>this.fail(new DOMException('File transfer cancelled.','AbortError'));
+    signal?.addEventListener('abort',this.abort,{once:true});
+    this.channel.addEventListener('close',()=>this.fail(Error('The file channel closed before completion.')));
+    this.channel.addEventListener('error',()=>this.fail(Error('The file channel failed.')));
+    this.channel.addEventListener('message',event=>{
+      if(this.closed)return;
+      if(this.pending){const next=this.pending;this.pending=null;clearTimeout(next.timer);next.resolve(event.data);}
+      else if(this.queue.length<2)this.queue.push(event.data);
+      else this.fail(Error('File transfer exceeded its bounded receive window.'));
+    });
+    if(signal?.aborted)this.abort();
+  }
+  fail(error){if(this.closed)return;this.closed=error;clearTimeout(this.openTimer);this.openReject(error);this.signal?.removeEventListener('abort',this.abort);if(this.pending){clearTimeout(this.pending.timer);this.pending.reject(error);this.pending=null;}this.channel.close();}
+  close(){this.fail(new DOMException('File operation ended.','AbortError'));}
+  async send(value){await this.open;if(this.closed)throw this.closed;this.channel.send(JSON.stringify(value));}
+  async next(timeout=30000){if(this.closed)throw this.closed;if(this.queue.length)return this.queue.shift();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>this.fail(Error('The file transfer timed out.')),timeout);this.pending={resolve,reject,timer};});}
+  async json(timeout=30000){const raw=await this.next(timeout);if(typeof raw!=='string' || raw.length>65536)throw Error('Invalid file response');const value=JSON.parse(raw);if(value.type==='error')throw Error(value.message);return value;}
+}
+
+async function channelUpload(session,file,progress){
+  if(!Number.isSafeInteger(file.size) || file.size>(session.features.fileLimit ?? Number.MAX_SAFE_INTEGER))throw Error('File exceeds the supported size limit.');
+  const rpc=new FileRPC(session,session.fileAbort.signal),hash=new FileSHA256();
+  try{
+    await rpc.send({type:'upload',name:file.name,size:file.size});const ready=await rpc.json();
+    if(ready.type!=='ready' || ready.size!==file.size || ready.chunk!==16384)throw Error('Invalid upload preparation.');
+    for(let offset=0;offset<file.size;){
+      const block=new Uint8Array(await file.slice(offset,offset+16384).arrayBuffer());
+      if(!block.length)throw Error('The source file ended early.');
+      hash.update(block);const packet=new Uint8Array(8+block.length);new DataView(packet.buffer).setBigUint64(0,BigInt(offset));packet.set(block,8);
+      rpc.channel.send(packet.buffer);offset+=block.length;const ack=await rpc.json();
+      if(ack.type!=='ack' || ack.offset!==offset)throw Error('Invalid upload acknowledgement.');
+      progress.value=file.size?offset/file.size*100:100;
+    }
+    const sha256=hash.hex();await rpc.send({type:'finish',sha256});const result=await rpc.json();
+    if(result.type!=='complete' || result.size!==file.size || result.sha256!==sha256)throw Error('Upload integrity verification failed.');
+    return result;
+  }finally{rpc.close();}
+}
+
+async function channelPick(session){const rpc=new FileRPC(session,session.fileAbort.signal);try{await rpc.send({type:'pick'});const result=await rpc.json(300000);if(result.type!=='selected')throw Error('Invalid file selection response.');return result;}finally{rpc.close();}}
+
+async function openChannelDestination(selected){
+  if(globalThis.showSaveFilePicker){
+    try{const handle=await showSaveFilePicker({suggestedName:selected.name});return {kind:'file',writer:await handle.createWritable(),finish:async()=>{},abort:async()=>{}};}
+    catch(error){if(!['SecurityError','NotAllowedError','NotSupportedError'].includes(error.name))throw error;}
+  }
+  if(!navigator.storage?.getDirectory)throw Error('This browser cannot stream this download to disk. File System Access or browser private file storage is required.');
+  const estimate=await navigator.storage.estimate();
+  if(Number.isFinite(estimate.quota) && selected.size>estimate.quota-(estimate.usage || 0))throw Error('Not enough browser-managed disk space for this download. Enable Save File Picker or free browser storage.');
+  const root=await navigator.storage.getDirectory(),dir=await root.getDirectoryHandle('remmie-downloads-v1',{create:true});
+  for await(const [name,entry] of dir.entries())if(/^download-[a-f0-9-]+\.ready$/.test(name)){
+    try{const info=JSON.parse(await (await entry.getFile()).text());
+      if(Number.isFinite(info.completed) && Date.now()-info.completed>7*86400000){await dir.removeEntry(name.slice(0,-6));await dir.removeEntry(name);}
+    }catch{/* Preserve files whose completion state is unknown. */}
+  }
+  const key='download-'+crypto.randomUUID(),handle=await dir.getFileHandle(key,{create:true});
+  const writer=await handle.createWritable();
+  return {kind:'browser',writer,abort:async()=>{await dir.removeEntry(key).catch(()=>{});},finish:async()=>{
+    const marker=await (await dir.getFileHandle(key+'.ready',{create:true})).createWritable();
+    await marker.write(JSON.stringify({completed:Date.now()}));await marker.close();
+    const file=await handle.getFile(),url=URL.createObjectURL(file),link=document.createElement('a');
+    link.href=url;link.download=selected.name;link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }};
+}
+
+async function channelDownload(session,selected,destination,progress){
+  let rpc=null;const hash=new FileSHA256();let offset=0,finished=false;
+  try{
+    rpc=new FileRPC(session,session.fileAbort.signal);
+    await rpc.send({type:'download',id:selected.id});const ready=await rpc.json();
+    if(ready.type!=='ready' || ready.size!==selected.size)throw Error('Download metadata changed. Choose the file again.');
+    while(offset<selected.size){
+      const raw=await rpc.next();if(typeof raw==='string'){const v=JSON.parse(raw);throw Error(v.message || 'The download ended early.');}
+      const packet=new Uint8Array(raw);if(packet.length<=8 || packet.length>16392 || new DataView(packet.buffer,packet.byteOffset,8).getBigUint64(0)!==BigInt(offset))throw Error('Invalid download offset or chunk.');
+      const block=packet.subarray(8);if(offset+block.length>selected.size)throw Error('Download exceeds its declared size.');
+      await destination.writer.write(block);hash.update(block);offset+=block.length;
+      progress.value=selected.size?offset/selected.size*100:100;await rpc.send({type:'ack',offset});
+    }
+    const digest=await rpc.json(),sha256=hash.hex();
+    if(digest.type!=='digest' || digest.size!==selected.size || digest.sha256!==sha256)throw Error('Download integrity verification failed.');
+    await rpc.send({type:'verified',sha256});const complete=await rpc.json();
+    if(complete.type!=='complete' || complete.sha256!==sha256 || complete.size!==selected.size)throw Error('Download completion was not confirmed.');
+    await destination.writer.close();await destination.finish();finished=true;return sha256;
+  }finally{rpc?.close();if(!finished){await destination.writer.abort().catch(()=>{});await destination.abort();}}
+}
+// End streaming file helpers.
 
 function fileSize(bytes) {
   return bytes < 1024**2 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024**2).toFixed(1)} MiB`;
@@ -2505,7 +2868,7 @@ function fileOptions(session, extra = {}) {
 }
 async function fileOperation(action) {
   const session = active;
-  if (!session?.authorized || !session.features.files || session.fileBusy || session.fileCancelling || session.speedRun) return;
+  if (!session?.authorized || !session.features.files || !["general","office"].includes(session.profile || "general") || session.fileBusy || session.fileCancelling || session.speedRun) return;
   session.fileBusy = true;
   session.fileAbort = new AbortController();
   const progress = document.querySelector("#file-progress");
@@ -2525,7 +2888,13 @@ document.querySelector("#file-upload").addEventListener("change", event => {
   event.target.value = "";
   if (!file) return;
   fileOperation(async (session, progress) => {
-    if (file.size > 16 * 1024**3) throw new Error("Files must be at most 16 GiB.");
+    if(session.features.fileDataChannel){
+      fileStatus.textContent=`Uploading ${file.name}…`;
+      const result=await channelUpload(session,file,progress);
+      if(active===session)fileStatus.textContent=`Uploaded ${result.name} (${fileSize(result.size)}). SHA-256 verified.`;
+      return;
+    }
+    if (!Number.isSafeInteger(file.size) || file.size>(session.features.fileLimit ?? 16*1024**3)) throw new Error('File exceeds the supported size limit.');
     fileStatus.textContent = `Uploading ${file.name}…`;
     const ticket = await requestJSON(session.base, "files/upload", fileOptions(session, {
       method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: file.name, size: file.size}),
@@ -2556,7 +2925,7 @@ document.querySelector("#file-upload").addEventListener("change", event => {
 });
 document.querySelector("#file-pick").addEventListener("click", () => fileOperation(async session => {
   fileStatus.textContent = "Choose a file in the picker on the remote desktop. Cancel is available here.";
-  const selected = await requestJSON(session.base, "files/pick", fileOptions(session, {method: "POST"}));
+  const selected = session.features.fileDataChannel ? await channelPick(session) : await requestJSON(session.base, "files/pick", fileOptions(session, {method: "POST"}));
   if (active !== session) return;
   session.download = selected.cancelled ? null : selected;
   document.querySelector("#file-selected").textContent = session.download ? `${selected.name} · ${fileSize(selected.size)}` : "No download selected.";
@@ -2564,6 +2933,15 @@ document.querySelector("#file-pick").addEventListener("click", () => fileOperati
 }));
 document.querySelector("#file-download").addEventListener("click", () => fileOperation(async (session, progress) => {
   const selected = session.download;
+  if(session.features.fileDataChannel){
+    fileStatus.textContent=`Downloading ${selected.name}…`;
+    const destination=await openChannelDestination(selected);
+    await channelDownload(session,selected,destination,progress);
+    if(active===session)fileStatus.textContent=destination.kind==='browser'
+      ? `SHA-256 verified. Sent ${selected.name} to browser downloads; check the download manager.`
+      : `Downloaded ${selected.name} (${fileSize(selected.size)}). SHA-256 verified.`;
+    return;
+  }
   let writable = null;
   try {
     if (globalThis.showSaveFilePicker) {
@@ -2624,6 +3002,7 @@ document.querySelector("#file-cancel").addEventListener("click", () => {
   session.fileCancelling = true;
   desktopControls(session);
   session.fileAbort.abort();
+  if(session.features.fileDataChannel){session.fileCancelling=false;desktopControls(active);return;}
   requestJSON(session.base, "files/cancel", {method: "POST", headers: {Authorization: `Bearer ${session.fileToken}`}, signal: session.abort.signal})
     .catch(() => { if (active === session) fileStatus.textContent = "Cancellation was not acknowledged. Reconnect before starting another transfer."; })
     .finally(() => { session.fileCancelling = false; if (active === session) desktopControls(session); });

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="referrer" content="no-referrer"><title>Breach Protocol</title>
-  <link rel="stylesheet" href="./style.css?v=auto-connect-1-r2">
-  <script type="module" src="./app.js?v=auto-connect-1-r2"></script>
+  <link rel="stylesheet" href="./style.css?v=all-modes-files-1">
+  <script type="module" src="./app.js?v=all-modes-files-1"></script>
 </head>
 <body class="breach-locked">
   <section id="breach-gate" aria-labelledby="breach-title">
@@ -132,6 +132,7 @@
         <label for="video-codec">Video codec</label>
         <select id="video-codec" disabled><option value="auto">Automatic</option></select>
         <p id="codec-status" class="help">Host support is checked when connecting.</p>
+        <p id="av1-probe-status" class="help"></p>
         <label for="video-resolution">Stream resolution</label>
         <select id="video-resolution" disabled><option value="1280x720">1280×720</option></select>
         <p id="resolution-status" class="help">Fits the desktop inside the selected size, without stretching or upscaling. Windows display mode stays the same.</p>
@@ -187,6 +188,7 @@
         <p id="file-selected" class="help">No download selected.</p>
         <button id="file-download" type="button" disabled>Download selected file</button>
         <progress id="file-progress" max="100" value="0" hidden aria-label="File transfer progress"></progress>
+        <p class="help">Files are available in General and Office, including TURN/TCP. Gaming and Media block transfers. Size is limited by destination space, filesystem and browser capabilities. Downloads may use browser-managed disk staging.</p>
         <p id="file-status" role="status">Connect to transfer files.</p>
         <button id="file-cancel" type="button" disabled>Cancel transfer</button>
       </div></details>
@@ -211,6 +213,12 @@
         <button id="speed-copy" type="button" disabled>Copy speed result</button>
       </div>
       <pre id="speed-summary" tabindex="0" role="status">Connect to a compatible host to test speed.</pre>
+      <p class="help">Measure host → viewer over this WebRTC connection, including TURN when in use. Up to 5 seconds and 64 MiB of dummy data. May briefly affect the stream. This measures data-channel throughput under current load; it does not guarantee a sustainable video bitrate.</p>
+      <div class="toolbar">
+        <button id="bandwidth-start" type="button" disabled>Measure WebRTC bandwidth</button>
+        <button id="bandwidth-cancel" type="button" disabled>Cancel bandwidth measurement</button>
+      </div>
+      <pre id="bandwidth-summary" tabindex="0" role="status">Network bandwidth is measured separately from decoder capability.</pre>
     </details>
 
       <p id="control-status" role="status"></p>
